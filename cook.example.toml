@@ -1,0 +1,185 @@
+# Cook Master Configuration Reference
+# A modern, standalone, multi-platform build and packaging engine for Go and Wails applications.
+
+[package]
+name = "myapp"
+product_name = "My Application"
+company = "Acme Corp"
+identifier = "com.acme.myapp"
+description = "High performance cross-platform application"
+copyright = "(c) 2026, Acme Corp"
+license = "MIT"
+homepage = "https://example.com"
+maintainer = "Dev Team <dev@example.com>"
+output_dir = "bin"
+icon = "build/appicon.png"
+root_dir = "."
+
+# Static version or dynamic single-source-of-truth extraction:
+# version = "1.0.0"
+version_file = "pkg/version/version.go"
+version_regex = 'AppVersion\s*=\s*"([^"]+)"'
+
+[frontend]
+enabled = true
+dir = "frontend"
+package_manager = "npm" # npm, pnpm, yarn, bun
+install_cmd = ""        # optional override, defaults to `<manager> install`
+build_cmd = "npm run build"
+bindings_cmd = "wails3 generate bindings -ts -i"
+dist_dir = "frontend/dist"
+
+# Binaries to compile (supports dual-binary GUI + companion CLI + headless server)
+[[binaries]]
+name = "myapp"
+path = "."
+gui = true
+cgo = true
+tags = ["production"]
+ldflags = "-w -s"
+commit_var = "main.AppCommit"
+clean_syso = true
+upx = false
+
+[[binaries]]
+name = "myapp-cli"
+path = "./cmd/myapp-cli"
+gui = false
+cgo = true
+tags = []
+ldflags = "-w -s"
+commit_var = "main.AppCommit"
+upx = true
+
+# Lifecycle hooks and fix scripts
+[hooks]
+pre_build = []
+post_build = []
+pre_package = []
+post_package = []
+fix_scripts = { appimage = "scripts/fix-appimage.sh" }
+
+# Linux Packaging
+[linux]
+targets = ["deb", "rpm", "archlinux", "appimage"]
+desktop_file = "build/linux/myapp.desktop"
+categories = "Development;"
+bundled_cli = "myapp-cli"
+
+[linux.deb]
+section = "utils"
+priority = "optional"
+depends = ["libgtk-4-1", "libwebkitgtk-6.0-4"]
+postinstall = "build/linux/postinstall.sh"
+
+[linux.rpm]
+group = "Applications/Productivity"
+depends = ["gtk4", "webkitgtk6.0"]
+
+[linux.archlinux]
+pkgbase = "myapp"
+depends = ["gtk4", "webkitgtk-6.0", "hicolor-icon-theme"]
+sign = false
+
+[linux.appimage]
+fix_script = "scripts/fix-appimage.sh"
+update_info = "zsync|https://updates.example.com/appimage-zsync"
+generate_sha256 = true
+# Optional directory where AppImage tooling is downloaded/cached.
+# tools_dir = "build/appimage-tools"
+
+# Windows Packaging
+[windows]
+targets = ["syso", "nsis"]
+bundled_cli = "myapp-cli.exe"
+
+[windows.syso]
+icon = "build/windows/icon.ico"
+manifest = "build/windows/wails.exe.manifest"
+info_json = "build/windows/info.json"
+out = "wails_windows_amd64.syso"
+
+[windows.nsis]
+script = "build/windows/nsis/project.nsi"
+install_scope = "machine" # machine (admin/Program Files) or user (AppData)
+webview2_bootstrapper = "build/windows/nsis/MicrosoftEdgeWebview2Setup.exe"
+auto_download_webview2 = true
+
+[windows.signing]
+certificate = ""
+thumbprint = ""
+timestamp_server = "http://timestamp.digicert.com"
+
+# macOS Packaging
+[darwin]
+targets = ["app", "dmg"]
+bundle_id = "com.acme.myapp"
+min_os_version = "12.0"
+info_plist = "build/darwin/Info.plist"
+entitlements = "build/darwin/entitlements.plist"
+microphone_usage_description = "MyApp requires microphone access."
+icons = "build/darwin/icons.icns"
+assets_car = "build/darwin/Assets.car"
+bundled_cli = "myapp-cli"
+codesign = "adhoc" # adhoc or developer_id
+notarize = false
+
+[darwin.dmg]
+background = "build/darwin/dmg-background.png"
+volume_icon = "build/darwin/icons.icns"
+window_width = 540
+window_height = 380
+app_position = [135, 190]
+applications_position = [405, 190]
+
+# Wails v3 Integration & Dev Mode Configuration
+[wails]
+config_file = "build/config.yml"
+
+# Optional Wails project metadata, forwarded into the generated Wails config.
+# version = "1.0.0"
+# company_name = "Acme Corp"
+# product_name = "My Application"
+# product_identifier = "com.acme.myapp"
+# description = "High performance cross-platform application"
+# copyright = "(c) 2026, Acme Corp"
+# comments = "Built with Cook"
+
+# Optional file associations registered by the packaged app.
+# [[wails.file_associations]]
+# ext = ".myapp"
+# name = "MyApp Document"
+# description = "MyApp project file"
+# icon_name = "document"
+# role = "Editor"
+# mime_type = "application/x-myapp"
+
+# Optional dev_mode overrides for wails3 dev
+[wails.dev]
+debounce = 1000
+log_level = "warn"
+# root_path = "."               # project root watched by the dev server
+# ignore_dirs = ["node_modules"] # directories excluded from file watching
+# ignore_files = ["*.tmp"]       # file patterns excluded from file watching
+# watched_extension = [".go"]    # only restart for these extensions
+# git_ignore = true              # honour .gitignore when watching files
+# Optional custom dev processes (defaults to standard wails3 build & dev commands):
+# [[wails.dev.executes]]
+# cmd = "wails3 build DEV=true"
+# type = "blocking"
+# [[wails.dev.executes]]
+# cmd = "wails3 task common:dev:frontend"
+# type = "background"
+# [[wails.dev.executes]]
+# cmd = "wails3 task run"
+# type = "primary"
+
+# Optional template overrides. `dir` is the template root (default build/templates);
+# each mapping copies a template `src` to a generated `dest` relative to the build output.
+[templates]
+dir = "build/templates"
+
+# [[templates.mappings]]
+# src = "build/templates/AppImageBuilder.yml"
+# dest = "AppImageBuilder.yml"
+

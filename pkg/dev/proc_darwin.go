@@ -1,0 +1,14 @@
+//go:build darwin || freebsd || openbsd || netbsd
+
+package dev
+
+import (
+	"os/exec"
+	"syscall"
+)
+
+func setSysProcAttr(cmd *exec.Cmd) {
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		Setpgid: true,
+	}
+}

@@ -1,0 +1,12 @@
+.worktrees/
+bin/
+*.syso
+*.AppImage
+*.zsync
+*.sha256
+*.deb
+*.rpm
+*.pkg.tar.zst
+*.sig
+*.dmg
+*.msix
