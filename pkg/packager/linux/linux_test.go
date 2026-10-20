@@ -18,7 +18,7 @@ func TestLinuxPackager_Interface(t *testing.T) {
 		t.Errorf("expected Name() to be 'linux', got %s", p.Name())
 	}
 
-	expectedTargets := []string{"deb", "rpm", "archlinux", "appimage"}
+	expectedTargets := []string{"deb", "rpm", "archlinux", "void", "appimage"}
 	if !reflect.DeepEqual(p.SupportedTargets(), expectedTargets) {
 		t.Errorf("expected SupportedTargets() to be %v, got %v", expectedTargets, p.SupportedTargets())
 	}

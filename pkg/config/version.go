@@ -16,6 +16,7 @@ type VersionInfo struct {
 	Debian  string // e.g. "0.1.0~alpha12"
 	RPM     string // e.g. "0.1.0~alpha12"
 	Arch    string // e.g. "0.1.0alpha12"
+	Void    string // e.g. "0.1.0alpha12" (no hyphen; XBPS uses '_' for the revision)
 	Windows string // e.g. "0.1.0.0" or "0.1.0"
 }
 
@@ -64,6 +65,7 @@ func ResolveVersion(cfg *Config, baseDir string) (*VersionInfo, error) {
 		Debian:  FormatDebianVersion(rawVersion),
 		RPM:     FormatRPMVersion(rawVersion),
 		Arch:    FormatArchVersion(rawVersion),
+		Void:    FormatVoidVersion(rawVersion),
 		Windows: FormatWindowsVersion(rawVersion),
 	}, nil
 }
@@ -109,6 +111,13 @@ func FormatRPMVersion(v string) string {
 // FormatArchVersion removes hyphens entirely because pacman rejects hyphens in pkgver:
 // e.g. "0.1.0-alpha-12" -> "0.1.0alpha12"
 func FormatArchVersion(v string) string {
+	return strings.ReplaceAll(v, "-", "")
+}
+
+// FormatVoidVersion removes hyphens because XBPS reserves the hyphen as the
+// name/version separator, and '_' as the revision separator:
+// e.g. "0.1.0-alpha-12" -> "0.1.0alpha12"
+func FormatVoidVersion(v string) string {
 	return strings.ReplaceAll(v, "-", "")
 }
 

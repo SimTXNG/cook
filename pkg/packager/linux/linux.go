@@ -29,10 +29,10 @@ func (p *Packager) Name() string {
 
 // SupportedTargets returns the list of supported packaging formats for Linux.
 func (p *Packager) SupportedTargets() []string {
-	return []string{"deb", "rpm", "archlinux", "appimage"}
+	return []string{"deb", "rpm", "archlinux", "void", "appimage"}
 }
 
-// Package executes packaging for the requested target ("deb", "rpm", "archlinux", "appimage").
+// Package executes packaging for the requested target ("deb", "rpm", "archlinux", "void", "appimage").
 func (p *Packager) Package(ctx context.Context, cfg *config.Config, target, arch string, binaries map[string]string) ([]string, error) {
 	if arch == "" {
 		arch = runtime.GOARCH
@@ -44,10 +44,15 @@ func (p *Packager) Package(ctx context.Context, cfg *config.Config, target, arch
 	if t == "aur" {
 		t = "archlinux"
 	}
+	if t == "xbps" {
+		t = "void"
+	}
 
 	switch t {
 	case "deb", "rpm", "archlinux":
 		return PackageNFPM(ctx, cfg, t, arch, binaries)
+	case "void":
+		return PackageXBPS(ctx, cfg, arch, binaries)
 	case "appimage":
 		return PackageAppImage(ctx, cfg, arch, binaries)
 	default:

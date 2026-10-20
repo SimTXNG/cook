@@ -5,7 +5,9 @@ go 1.26.8
 require (
 	github.com/ProtonMail/go-crypto v1.5.2
 	github.com/atterpac/refresh v1.1.4
+	github.com/fsnotify/fsnotify v1.10.1
 	github.com/goreleaser/nfpm/v2 v2.48.0
+	github.com/klauspost/compress v1.20.1
 	github.com/pelletier/go-toml/v2 v2.4.3
 	github.com/spf13/cobra v1.10.2
 	github.com/tc-hib/winres v0.3.1
@@ -26,7 +28,6 @@ require (
 	github.com/cloudflare/circl v1.6.4 // indirect
 	github.com/cyphar/filepath-securejoin v0.7.0 // indirect
 	github.com/emirpasic/gods v1.18.1 // indirect
-	github.com/fsnotify/fsnotify v1.10.1 // indirect
 	github.com/go-git/gcfg v1.5.1-0.20230307220236-3a3c6141e376 // indirect
 	github.com/go-git/go-billy/v5 v5.9.0 // indirect
 	github.com/go-git/go-git/v5 v5.19.2 // indirect
@@ -39,7 +40,6 @@ require (
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/jbenet/go-context v0.0.0-20150711004518-d14ea06fba99 // indirect
 	github.com/kevinburke/ssh_config v1.6.0 // indirect
-	github.com/klauspost/compress v1.20.1 // indirect
 	github.com/klauspost/cpuid/v2 v2.3.0 // indirect
 	github.com/klauspost/pgzip v1.2.7 // indirect
 	github.com/lmittmann/tint v1.1.3 // indirect

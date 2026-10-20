@@ -10,6 +10,7 @@ func TestVersionFormatting(t *testing.T) {
 		wantDeb     string
 		wantRPM     string
 		wantArch    string
+		wantVoid    string
 		wantWindows string
 	}{
 		{
@@ -17,6 +18,7 @@ func TestVersionFormatting(t *testing.T) {
 			wantDeb:     "0.1.0~alpha12",
 			wantRPM:     "0.1.0~alpha12",
 			wantArch:    "0.1.0alpha12",
+			wantVoid:    "0.1.0alpha12",
 			wantWindows: "0.1.0.0",
 		},
 		{
@@ -24,6 +26,7 @@ func TestVersionFormatting(t *testing.T) {
 			wantDeb:     "1.2.3",
 			wantRPM:     "1.2.3",
 			wantArch:    "1.2.3",
+			wantVoid:    "1.2.3",
 			wantWindows: "1.2.3.0",
 		},
 		{
@@ -31,6 +34,7 @@ func TestVersionFormatting(t *testing.T) {
 			wantDeb:     "2.0.0~beta.1",
 			wantRPM:     "2.0.0~beta.1",
 			wantArch:    "2.0.0beta.1",
+			wantVoid:    "2.0.0beta.1",
 			wantWindows: "2.0.0.0",
 		},
 	}
@@ -48,6 +52,10 @@ func TestVersionFormatting(t *testing.T) {
 			gotArch := FormatArchVersion(tc.input)
 			if gotArch != tc.wantArch {
 				t.Errorf("FormatArchVersion(%q) = %q, want %q", tc.input, gotArch, tc.wantArch)
+			}
+			gotVoid := FormatVoidVersion(tc.input)
+			if gotVoid != tc.wantVoid {
+				t.Errorf("FormatVoidVersion(%q) = %q, want %q", tc.input, gotVoid, tc.wantVoid)
 			}
 			gotWin := FormatWindowsVersion(tc.input)
 			if gotWin != tc.wantWindows {

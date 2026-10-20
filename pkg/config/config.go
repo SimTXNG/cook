@@ -85,6 +85,7 @@ type LinuxConfig struct {
 	Deb         LinuxDebConfig  `toml:"deb"`
 	RPM         LinuxRPMConfig  `toml:"rpm"`
 	Arch        LinuxArchConfig `toml:"archlinux"`
+	Void        LinuxVoidConfig `toml:"void"`
 	AppImage    AppImageConfig  `toml:"appimage"`
 }
 
@@ -110,6 +111,28 @@ type LinuxArchConfig struct {
 	Sign    bool     `toml:"sign"`
 	GPGKey  string   `toml:"gpg_key"`
 	GPGName string   `toml:"gpg_name"`
+}
+
+// LinuxVoidConfig configures Void Linux (XBPS) packaging.
+type LinuxVoidConfig struct {
+	Depends       []string `toml:"depends"`
+	Conflicts     []string `toml:"conflicts"`
+	Provides      []string `toml:"provides"`
+	Replaces      []string `toml:"replaces"`
+	ConfFiles     []string `toml:"conf_files"`
+	MutableFiles  []string `toml:"mutable_files"`
+	Tags          string   `toml:"tags"`
+	Revision      int      `toml:"revision"`
+	InstallScript string   `toml:"install_script"`
+	RemoveScript  string   `toml:"remove_script"`
+}
+
+// EffectiveRevision returns the XBPS package revision, defaulting to 1.
+func (v LinuxVoidConfig) EffectiveRevision() int {
+	if v.Revision > 0 {
+		return v.Revision
+	}
+	return 1
 }
 
 type AppImageConfig struct {
@@ -356,7 +379,7 @@ var (
 	packageNamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9+._-]*$`)
 	versionPattern     = regexp.MustCompile(`^[0-9][A-Za-z0-9.+~_-]*$`)
 	knownTargets       = map[string]map[string]bool{
-		"linux":   {"appimage": true, "deb": true, "rpm": true, "archlinux": true, "aur": true},
+		"linux":   {"appimage": true, "deb": true, "rpm": true, "archlinux": true, "aur": true, "void": true, "xbps": true},
 		"windows": {"nsis": true, "msix": true, "syso": true},
 		"darwin":  {"app": true, "dmg": true},
 	}
@@ -387,6 +410,7 @@ func (c *Config) ResolvedVersion() *VersionInfo {
 		Debian:  FormatDebianVersion(raw),
 		RPM:     FormatRPMVersion(raw),
 		Arch:    FormatArchVersion(raw),
+		Void:    FormatVoidVersion(raw),
 		Windows: FormatWindowsVersion(raw),
 	}
 }

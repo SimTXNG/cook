@@ -61,7 +61,7 @@ fix_scripts = { appimage = "scripts/fix-appimage.sh" }
 
 # Linux Packaging
 [linux]
-targets = ["deb", "rpm", "archlinux", "appimage"]
+targets = ["deb", "rpm", "archlinux", "void", "appimage"]
 desktop_file = "build/linux/myapp.desktop"
 categories = "Development;"
 bundled_cli = "myapp-cli"
@@ -80,6 +80,22 @@ depends = ["gtk4", "webkitgtk6.0"]
 pkgbase = "myapp"
 depends = ["gtk4", "webkitgtk-6.0", "hicolor-icon-theme"]
 sign = false
+
+# Void Linux (.xbps): names may be bare ("gtk4") or versioned ("gtk4>=0"); bare
+# names are normalized to "name>=0" because libxbps rejects unversioned entry
+# strings. Use Void package names, not library file names: the WebKitGTK runtime
+# is "libwebkitgtk60" for GTK4/6.0 and "libwebkit2gtk41" for GTK3/4.1.
+[linux.void]
+depends = ["gtk4", "libwebkitgtk60", "hicolor-icon-theme"]
+revision = 1
+# tags = "development"
+# conflicts = []
+# provides = []
+# replaces = []
+# conf_files = ["/etc/myapp/config.toml"]
+# mutable_files = ["/usr/share/myapp/runtime"]
+# install_script = "build/linux/xbps/INSTALL"
+# remove_script = "build/linux/xbps/REMOVE"
 
 [linux.appimage]
 fix_script = "scripts/fix-appimage.sh"

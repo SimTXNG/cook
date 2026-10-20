@@ -7,6 +7,7 @@ bin/
 *.deb
 *.rpm
 *.pkg.tar.zst
+*.xbps
 *.sig
 *.dmg
 *.msix

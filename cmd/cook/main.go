@@ -37,7 +37,7 @@ func main() {
 		Long: `Cook is a complete replacement for 'wails3 package' and complex Taskfile packaging pipelines.
 It provides native multi-binary compilation, single-source-of-truth version synchronization,
 lifecycle hooks, AppImage relocation and fix-scripts, pure-Go NFPM packaging (deb, rpm, archlinux),
-Windows PE resources (.syso), NSIS installers, and macOS styled DMGs.`,
+Void Linux (.xbps) packaging, Windows PE resources (.syso), NSIS installers, and macOS styled DMGs.`,
 	}
 
 	rootCmd.PersistentFlags().StringVarP(&cfgPath, "config", "c", "", "path to config file (defaults to cook.toml)")
@@ -116,11 +116,11 @@ func newPackageCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "package [targets...]",
 		Short: "Package application for the target platform",
-		Long: `Packages the application for distribution into deb, rpm, archlinux, appimage, nsis, dmg, etc.
+		Long: `Packages the application for distribution into deb, rpm, archlinux, void (xbps), appimage, nsis, dmg, etc.
 Example:
   cook package
   cook package appimage
-  cook package deb rpm
+  cook package deb rpm void
   cook package --os windows --arch amd64`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := loadCfg()
@@ -242,6 +242,7 @@ func newValidateCmd() *cobra.Command {
 			fmt.Printf("  Raw Version:        %s\n", cfg.Version.Raw)
 			fmt.Printf("  Debian/RPM Version: %s\n", cfg.Version.Debian)
 			fmt.Printf("  Arch Linux Version: %s\n", cfg.Version.Arch)
+			fmt.Printf("  Void Linux Version: %s\n", cfg.Version.Void)
 			fmt.Printf("  Windows Version:    %s\n", cfg.Version.Windows)
 			fmt.Printf("  Git Commit:         %s\n", cfg.Version.Commit)
 			fmt.Printf("  Binaries:           %d\n", len(cfg.Binaries))

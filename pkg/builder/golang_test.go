@@ -174,6 +174,42 @@ func TestBuildBinaryCleansSysoBeforeCompilation(t *testing.T) {
 	}
 }
 
+func TestBuildBinaryUPXAlreadyPackedIsNotFatal(t *testing.T) {
+	if runtime.GOOS == "darwin" || runtime.GOOS == "windows" {
+		t.Skip("UPX is skipped on darwin and the fake script is POSIX-only")
+	}
+
+	root := setupGoModule(t)
+
+	binDir := t.TempDir()
+	upx := filepath.Join(binDir, "upx")
+	// Mimic UPX: compression of an already-packed binary fails, but `-l`
+	// probing a packed file succeeds.
+	writeFile(t, upx, "#!/bin/sh\ncase \"$1\" in\n  -l) exit 0 ;;\n  *) exit 2 ;;\nesac\n")
+	if err := os.Chmod(upx, 0o755); err != nil {
+		t.Fatalf("chmod upx: %v", err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	cfg := &config.Config{
+		RootDir: root,
+		Package: config.PackageConfig{OutputDir: "bin"},
+	}
+	bCfg := &config.BinaryConfig{
+		Name: "foo",
+		Path: "./cmd/foo",
+		UPX:  true,
+	}
+
+	out, err := BuildBinary(context.Background(), cfg, bCfg, runtime.GOOS, runtime.GOARCH)
+	if err != nil {
+		t.Fatalf("already-packed binary should not fail the build: %v", err)
+	}
+	if _, err := os.Stat(out); err != nil {
+		t.Fatalf("built binary missing: %v", err)
+	}
+}
+
 func TestBuildBinaryUPXFailureReturnsError(t *testing.T) {
 	if runtime.GOOS == "darwin" || runtime.GOOS == "windows" {
 		t.Skip("UPX is skipped on darwin and the fake script is POSIX-only")

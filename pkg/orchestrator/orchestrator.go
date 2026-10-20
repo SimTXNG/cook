@@ -252,6 +252,8 @@ var packagingTargetOS = map[string]string{
 	"deb":       "linux",
 	"rpm":       "linux",
 	"archlinux": "linux",
+	"void":      "linux",
+	"xbps":      "linux",
 	"nsis":      "windows",
 	"msix":      "windows",
 	"syso":      "windows",
@@ -290,6 +292,9 @@ func ParseTarget(raw string) (string, string) {
 func normalizeTargetName(t string) string {
 	if t == "aur" {
 		return "archlinux"
+	}
+	if t == "xbps" {
+		return "void"
 	}
 	return t
 }

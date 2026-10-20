@@ -7,7 +7,7 @@
 ## Highlights & Features
 
 - **Pure-Go Packaging Engine**:
-  - **Linux**: Embedded NFPM generator creates `.deb`, `.rpm`, and Arch Linux (`.pkg.tar.zst`) packages directly in Go with automatic post-install scripts and EVR versioning.
+  - **Linux**: Embedded NFPM generator creates `.deb`, `.rpm`, and Arch Linux (`.pkg.tar.zst`) packages directly in Go with automatic post-install scripts and EVR versioning. A native, pure-Go generator also produces Void Linux `.xbps` packages (no `xbps-create` required), with `props.plist`/`files.plist` metadata, SHA-256 file hashes, and optional maintainer scripts.
   - **Windows**: Pure-Go PE resource compiler via `winres` generates `.syso` COFF objects containing high-DPI manifests (`permonitorv2`), version info, and icons without requiring external MinGW/windres tools. Pure-Go MSIX packaging via `go-msix`.
   - **macOS**: Full `.app` bundle assembly bundling both GUI and companion CLI executables into `Contents/MacOS/`, with styled `.dmg` disk image creation.
 - **Single-Source-of-Truth Versioning**:
@@ -83,8 +83,8 @@ Builds and packages targets for the specified operating system and architecture:
 # Package all targets for host OS
 cook package
 
-# Package specific Linux formats (deb, rpm, archlinux, appimage)
-cook package deb rpm archlinux
+# Package specific Linux formats (deb, rpm, archlinux, void, appimage)
+cook package deb rpm archlinux void
 cook package linux.appimage
 
 # Package using pre-built binaries (skips Go compilation phase)
@@ -96,6 +96,19 @@ cook package nsis msix --os windows --arch amd64
 # Package macOS .app bundle and DMG
 cook package app dmg --os darwin --arch amd64
 ```
+
+Void `.xbps` packages are emitted unsigned. Before distributing them, index the
+output directory with `xbps-rindex -a <pkg>.xbps` (and sign with
+`xbps-rindex -S --privkey <key> <pkg>.xbps`, which writes the detached `.sig2`)
+or publish them through an existing signed repository.
+
+Dependencies in `[linux.void]` are written as `run_depends`/`conflicts`/
+`replaces` metadata. libxbps only accepts a fully qualified `name-version_revision`
+or a versioned pattern such as `gtk4>=0`; a bare name fails with "can't guess
+pkgname". Cook therefore normalizes bare names by appending `>=0`, so
+`depends = ["gtk4", "libwebkitgtk60"]` is valid. Use Void package names (the
+WebKitGTK runtime is `libwebkitgtk60` for GTK4/6.0, or `libwebkit2gtk41` for
+GTK3/4.1), not library file names.
 
 ### 4. Windows Resource Compilation (`syso`)
 Generates a `.syso` COFF resource object in pure Go:
@@ -196,11 +209,16 @@ upx = true
 [hooks]
 fix_scripts = { appimage = "scripts/fix-appimage.sh" }
 
-# Linux targets: deb, rpm, archlinux, appimage
+# Linux targets: deb, rpm, archlinux, void, appimage
 [linux]
-targets = ["deb", "rpm", "archlinux", "appimage"]
+targets = ["deb", "rpm", "archlinux", "void", "appimage"]
 categories = "Development;"
 bundled_cli = "myapp-cli"
+
+# Void Linux (.xbps) packaging: package name, revision and dependencies.
+[linux.void]
+depends = ["gtk4", "libwebkitgtk60", "hicolor-icon-theme"]
+revision = 1
 
 [linux.appimage]
 fix_script = "scripts/fix-appimage.sh"

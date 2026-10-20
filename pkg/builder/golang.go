@@ -3,6 +3,7 @@ package builder
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"slices"
@@ -162,12 +163,27 @@ func BuildBinary(ctx context.Context, cfg *config.Config, bCfg *config.BinaryCon
 		if _, err := os.Stat(outFile); err == nil {
 			fmt.Printf("==> Running UPX compression on %s\n", outFile)
 			if err := runner.RunArgs(ctx, "upx", []string{"-9", outFile}, cfg.RootDir, nil); err != nil {
-				return "", fmt.Errorf("UPX compression of binary %s failed: %w", bCfg.Name, err)
+				if isUPXPacked(ctx, runner, outFile, cfg.RootDir) {
+					// Rebuilds over an already-compressed binary (or --skip-build)
+					// make UPX fail with AlreadyPackedException; treat as done.
+					fmt.Printf("==> %s is already UPX-compressed, skipping\n", outFile)
+				} else {
+					return "", fmt.Errorf("UPX compression of binary %s failed: %w", bCfg.Name, err)
+				}
 			}
 		}
 	}
 
 	return outFile, nil
+}
+
+// isUPXPacked reports whether path is already a UPX-compressed executable.
+// `upx -l` only succeeds for packed files, so it doubles as a state probe.
+func isUPXPacked(ctx context.Context, runner *exec.Runner, path, dir string) bool {
+	probe := exec.NewRunner(runner.Prefix)
+	probe.Stdout = io.Discard
+	probe.Stderr = io.Discard
+	return probe.RunArgs(ctx, "upx", []string{"-l", path}, dir, nil) == nil
 }
 
 func cleanSysoFiles(rootDir, binaryPath string) error {
