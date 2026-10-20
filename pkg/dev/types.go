@@ -10,15 +10,18 @@ import (
 
 // DevOptions contains configuration options for cook dev mode.
 type DevOptions struct {
-	Port         int
-	Host         string
-	Secure       bool
-	Debounce     time.Duration
-	SkipBindings bool
-	SkipFrontend bool
-	SkipBackend  bool
-	ExtraTags    []string
-	Env          map[string]string
+	Port          int
+	Host          string
+	Secure        bool
+	Debounce      time.Duration
+	SkipBindings  bool
+	SkipFrontend  bool
+	SkipBackend   bool
+	ExtraTags     []string
+	GCFlags       string
+	SkipUnchanged bool
+	Force         bool
+	Env           map[string]string
 }
 
 // DefaultDevOptions returns default development options.

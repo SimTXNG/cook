@@ -40,6 +40,7 @@ ldflags = "-w -s"
 commit_var = "main.AppCommit"
 clean_syso = true
 upx = false
+# upx_level = 6 # 1 (fastest) .. 9 (smallest); defaults to 6
 
 [[binaries]]
 name = "myapp-cli"
@@ -50,6 +51,7 @@ tags = []
 ldflags = "-w -s"
 commit_var = "main.AppCommit"
 upx = true
+upx_level = 6
 
 # Lifecycle hooks and fix scripts
 [hooks]

@@ -123,7 +123,7 @@ func TestBuildEnvReplacesDuplicateKeys(t *testing.T) {
 	t.Setenv("CGO_ENABLED", "0")
 
 	extra := map[string]string{"CGO_ENABLED": "1"}
-	env := buildEnv(extra)
+	env := BuildEnv(extra)
 
 	count := 0
 	for _, entry := range env {

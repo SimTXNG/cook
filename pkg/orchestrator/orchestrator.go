@@ -13,16 +13,20 @@ import (
 	"github.com/simtxng/cook/pkg/exec"
 	"github.com/simtxng/cook/pkg/generator"
 	"github.com/simtxng/cook/pkg/packager"
+	"github.com/simtxng/cook/pkg/timing"
 )
 
 // Orchestrator coordinates the end-to-end build, hook, and packaging pipeline.
 type Orchestrator struct {
 	Packagers map[string]packager.Packager
+
+	templatesDone map[*config.Config]bool
 }
 
 func NewOrchestrator() *Orchestrator {
 	return &Orchestrator{
-		Packagers: make(map[string]packager.Packager),
+		Packagers:     make(map[string]packager.Packager),
+		templatesDone: make(map[*config.Config]bool),
 	}
 }
 
@@ -33,14 +37,37 @@ func (o *Orchestrator) Register(p packager.Packager) {
 
 // Build compiles the frontend (if enabled) and specified binaries.
 func (o *Orchestrator) Build(ctx context.Context, cfg *config.Config, binaryFilter []string, targetOS, targetArch string) (map[string]string, error) {
-	if err := generateTemplates(ctx, cfg); err != nil {
+	return o.BuildWithOptions(ctx, cfg, binaryFilter, targetOS, targetArch, builder.BuildOptions{})
+}
+
+// BuildWithOptions compiles the frontend and specified binaries with options.
+func (o *Orchestrator) BuildWithOptions(ctx context.Context, cfg *config.Config, binaryFilter []string, targetOS, targetArch string, opts builder.BuildOptions) (map[string]string, error) {
+	if err := o.generateTemplatesOnce(ctx, cfg); err != nil {
 		return nil, err
 	}
-	return builder.NewBuilder(cfg).Build(ctx, binaryFilter, targetOS, targetArch)
+	return builder.NewBuilder(cfg).BuildWithOptions(ctx, binaryFilter, targetOS, targetArch, opts)
+}
+
+// generateTemplatesOnce renders templates at most once per config for this
+// orchestrator instance.
+func (o *Orchestrator) generateTemplatesOnce(ctx context.Context, cfg *config.Config) error {
+	if o.templatesDone == nil {
+		o.templatesDone = make(map[*config.Config]bool)
+	}
+	if o.templatesDone[cfg] {
+		return nil
+	}
+	if err := generateTemplates(ctx, cfg); err != nil {
+		return err
+	}
+	o.templatesDone[cfg] = true
+	return nil
 }
 
 // generateTemplates renders config templates, failing the run on any error.
 func generateTemplates(ctx context.Context, cfg *config.Config) error {
+	done := timing.Start("templates")
+	defer done()
 	gen := generator.NewGenerator()
 	generated, err := gen.Generate(ctx, cfg, "", false)
 	if err != nil {
@@ -54,11 +81,16 @@ func generateTemplates(ctx context.Context, cfg *config.Config) error {
 
 // Package coordinates compilation, hook execution, and artifact packaging for the target OS.
 func (o *Orchestrator) Package(ctx context.Context, cfg *config.Config, targetOS, targetArch string, targetFilters []string, skipBuild bool) ([]string, error) {
+	return o.PackageWithOptions(ctx, cfg, targetOS, targetArch, targetFilters, skipBuild, builder.BuildOptions{})
+}
+
+// PackageWithOptions coordinates compilation, hooks, and packaging with build options.
+func (o *Orchestrator) PackageWithOptions(ctx context.Context, cfg *config.Config, targetOS, targetArch string, targetFilters []string, skipBuild bool, buildOpts builder.BuildOptions) ([]string, error) {
 	targetOS = config.NormalizeOS(targetOS)
 	targetArch = config.NormalizeArch(targetArch)
 
 	// Render templates exactly once per operation.
-	if err := generateTemplates(ctx, cfg); err != nil {
+	if err := o.generateTemplatesOnce(ctx, cfg); err != nil {
 		return nil, err
 	}
 
@@ -79,24 +111,6 @@ func (o *Orchestrator) Package(ctx context.Context, cfg *config.Config, targetOS
 		}
 	}
 
-	hooks := exec.NewHookManager(cfg)
-
-	// Phase 1/3 (build): compile binaries, or discover existing ones.
-	var binaries map[string]string
-	var err error
-	if !skipBuild {
-		fmt.Printf("==> [1/3 build] Compiling application binaries for %s/%s...\n", targetOS, targetArch)
-		binaries, err = builder.NewBuilder(cfg).Build(ctx, nil, targetOS, targetArch)
-		if err != nil {
-			return nil, fmt.Errorf("build phase failed: %w", err)
-		}
-	} else {
-		binaries, err = discoverBinaries(cfg, targetOS)
-		if err != nil {
-			return nil, err
-		}
-	}
-
 	// Determine the targets to package.
 	var targetsToRun []string
 	if len(targetFilters) > 0 {
@@ -114,6 +128,49 @@ func (o *Orchestrator) Package(ctx context.Context, cfg *config.Config, targetOS
 
 	if len(targetsToRun) == 0 {
 		return nil, fmt.Errorf("no packaging targets specified for OS %s in config or command line", targetOS)
+	}
+
+	needsBinaries := false
+	for _, rawTarget := range targetsToRun {
+		_, target := ParseTarget(rawTarget)
+		if targetNeedsBinaries(target) {
+			needsBinaries = true
+			break
+		}
+	}
+
+	hooks := exec.NewHookManager(cfg)
+
+	// Phase 1/3 (build): compile binaries, or discover existing ones. Targets
+	// such as syso only need configuration metadata, so skip compilation and
+	// frontend work while still honoring build hooks that may prepare resources.
+	var binaries map[string]string
+	var err error
+	if needsBinaries {
+		if !skipBuild {
+			fmt.Printf("==> [1/3 build] Compiling application binaries for %s/%s...\n", targetOS, targetArch)
+			buildDone := timing.Start("build phase")
+			binaries, err = builder.NewBuilder(cfg).BuildWithOptions(ctx, nil, targetOS, targetArch, buildOpts)
+			buildDone()
+			if err != nil {
+				return nil, fmt.Errorf("build phase failed: %w", err)
+			}
+		} else {
+			binaries, err = discoverBinaries(cfg, targetOS)
+			if err != nil {
+				return nil, err
+			}
+		}
+	} else {
+		binaries = map[string]string{}
+		if !skipBuild {
+			if err := hooks.RunPreBuild(ctx); err != nil {
+				return nil, err
+			}
+			if err := hooks.RunPostBuild(ctx); err != nil {
+				return nil, err
+			}
+		}
 	}
 
 	var allArtifacts []string
@@ -140,7 +197,9 @@ func (o *Orchestrator) Package(ctx context.Context, cfg *config.Config, targetOS
 		// Phase 3/3 (package): build the artifact(s) for this target.
 		fmt.Printf("\n==> [3/3 package] Packaging target [%s] for %s/%s...\n", target, osToUse, targetArch)
 
+		packageDone := timing.Start("package " + target)
 		artifacts, err := pkgEngine.Package(ctx, cfg, target, targetArch, binaries)
+		packageDone()
 		if err != nil {
 			return nil, fmt.Errorf("packaging target %s failed: %w", target, err)
 		}
@@ -164,6 +223,17 @@ func (o *Orchestrator) Package(ctx context.Context, cfg *config.Config, targetOS
 	}
 
 	return allArtifacts, nil
+}
+
+// targetNeedsBinaries reports whether a packaging target requires compiled
+// binaries. Resource-only targets such as syso do not.
+func targetNeedsBinaries(target string) bool {
+	switch target {
+	case "syso":
+		return false
+	default:
+		return true
+	}
 }
 
 // discoverBinaries locates previously-built binaries for --skip-build, failing

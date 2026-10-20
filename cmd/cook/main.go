@@ -12,11 +12,13 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/simtxng/cook/pkg/builder"
 	"github.com/simtxng/cook/pkg/config"
 	"github.com/simtxng/cook/pkg/dev"
 	"github.com/simtxng/cook/pkg/generator"
 	"github.com/simtxng/cook/pkg/orchestrator"
 	"github.com/simtxng/cook/pkg/packager/windows"
+	"github.com/simtxng/cook/pkg/timing"
 	"github.com/simtxng/cook/pkg/wails"
 )
 
@@ -25,9 +27,13 @@ const (
 )
 
 var (
-	cfgPath    string
-	targetOS   string
-	targetArch string
+	cfgPath       string
+	targetOS      string
+	targetArch    string
+	timings       bool
+	skipUnchanged bool
+	force         bool
+	jobs          int
 )
 
 func main() {
@@ -43,6 +49,13 @@ Void Linux (.xbps) packaging, Windows PE resources (.syso), NSIS installers, and
 	rootCmd.PersistentFlags().StringVarP(&cfgPath, "config", "c", "", "path to config file (defaults to cook.toml)")
 	rootCmd.PersistentFlags().StringVar(&targetOS, "os", runtime.GOOS, "target operating system (linux, windows, darwin)")
 	rootCmd.PersistentFlags().StringVar(&targetArch, "arch", runtime.GOARCH, "target architecture (amd64, arm64)")
+	rootCmd.PersistentFlags().BoolVar(&timings, "timings", false, "print per-phase build timings")
+	rootCmd.PersistentFlags().BoolVar(&skipUnchanged, "skip-unchanged", false, "skip build phases whose inputs have not changed")
+	rootCmd.PersistentFlags().BoolVar(&force, "force", false, "ignore cached fingerprints and rebuild everything")
+	rootCmd.PersistentFlags().IntVarP(&jobs, "jobs", "j", 0, "number of binaries to compile concurrently (0 = auto)")
+	rootCmd.PersistentPreRun = func(cmd *cobra.Command, args []string) {
+		timing.SetEnabled(timings || os.Getenv("COOK_TIMINGS") != "")
+	}
 
 	// Subcommands
 	rootCmd.AddCommand(newPackageCmd())
@@ -113,6 +126,7 @@ func newOrchestrator() *orchestrator.Orchestrator {
 
 func newPackageCmd() *cobra.Command {
 	var skipBuild bool
+	var skipBindings bool
 	cmd := &cobra.Command{
 		Use:   "package [targets...]",
 		Short: "Package application for the target platform",
@@ -131,7 +145,12 @@ Example:
 			orch := newOrchestrator()
 
 			ctx := context.Background()
-			artifacts, err := orch.Package(ctx, cfg, targetOS, targetArch, args, skipBuild)
+			artifacts, err := orch.PackageWithOptions(ctx, cfg, targetOS, targetArch, args, skipBuild, builder.BuildOptions{
+				Jobs:          jobs,
+				SkipUnchanged: skipUnchanged,
+				Force:         force,
+				SkipBindings:  skipBindings,
+			})
 			if err != nil {
 				return err
 			}
@@ -144,11 +163,13 @@ Example:
 	}
 
 	cmd.Flags().BoolVar(&skipBuild, "skip-build", false, "skip binary compilation and package existing binaries in output directory")
+	cmd.Flags().BoolVar(&skipBindings, "skip-bindings", false, "skip Wails bindings generation")
 	return cmd
 }
 
 func newBuildCmd() *cobra.Command {
 	var skipFrontend bool
+	var skipBindings bool
 	cmd := &cobra.Command{
 		Use:   "build [targets or binaries...]",
 		Short: "Compile binaries and/or package distribution targets",
@@ -186,14 +207,20 @@ Examples:
 			// If packaging targets were specified, orchestrator packages them.
 			// When binary filters are also present, build those binaries first and
 			// then package the existing artifacts so the filter is honored.
+			buildOpts := builder.BuildOptions{
+				Jobs:          jobs,
+				SkipUnchanged: skipUnchanged,
+				Force:         force,
+				SkipBindings:  skipBindings,
+			}
 			if len(packageTargets) > 0 {
 				if len(binaryArgs) > 0 {
-					if _, err := orch.Build(ctx, cfg, binaryArgs, targetOS, targetArch); err != nil {
+					if _, err := orch.BuildWithOptions(ctx, cfg, binaryArgs, targetOS, targetArch, buildOpts); err != nil {
 						return err
 					}
 				}
 
-				artifacts, err := orch.Package(ctx, cfg, targetOS, targetArch, packageTargets, len(binaryArgs) > 0)
+				artifacts, err := orch.PackageWithOptions(ctx, cfg, targetOS, targetArch, packageTargets, len(binaryArgs) > 0, buildOpts)
 				if err != nil {
 					return err
 				}
@@ -203,7 +230,7 @@ Examples:
 				return nil
 			}
 
-			binaries, err := orch.Build(ctx, cfg, binaryArgs, targetOS, targetArch)
+			binaries, err := orch.BuildWithOptions(ctx, cfg, binaryArgs, targetOS, targetArch, buildOpts)
 			if err != nil {
 				return err
 			}
@@ -217,6 +244,7 @@ Examples:
 	}
 
 	cmd.Flags().BoolVar(&skipFrontend, "skip-frontend", false, "skip building frontend assets")
+	cmd.Flags().BoolVar(&skipBindings, "skip-bindings", false, "skip Wails bindings generation")
 	return cmd
 }
 
@@ -509,6 +537,7 @@ func newDevCmd() *cobra.Command {
 		frontendOnly bool
 		debounceMs   int
 		tags         []string
+		gcflags      string
 		legacyWails  bool
 	)
 	cmd := &cobra.Command{
@@ -573,14 +602,17 @@ Examples:
 			}
 
 			devOpts := dev.DevOptions{
-				Port:         port,
-				Host:         host,
-				Secure:       secure,
-				Debounce:     debounce,
-				SkipBindings: skipBindings,
-				SkipFrontend: skipFrontend,
-				SkipBackend:  skipBackend,
-				ExtraTags:    tags,
+				Port:          port,
+				Host:          host,
+				Secure:        secure,
+				Debounce:      debounce,
+				SkipBindings:  skipBindings,
+				SkipFrontend:  skipFrontend,
+				SkipBackend:   skipBackend,
+				ExtraTags:     tags,
+				GCFlags:       gcflags,
+				SkipUnchanged: skipUnchanged,
+				Force:         force,
 			}
 
 			return dev.Run(cmd.Context(), cfg, devOpts)
@@ -597,12 +629,14 @@ Examples:
 	_ = cmd.Flags().MarkDeprecated("frontend-only", "use --skip-backend instead")
 	cmd.Flags().IntVar(&debounceMs, "debounce", 150, "watcher debounce interval in milliseconds")
 	cmd.Flags().StringSliceVar(&tags, "tags", nil, "additional Go build tags")
+	cmd.Flags().StringVar(&gcflags, "gcflags", "", "Go compiler flags for dev builds (e.g. all=-N -l)")
 	cmd.Flags().BoolVar(&legacyWails, "legacy-wails", false, "fallback to legacy wails3 dev command")
 	return cmd
 }
 
 func newRunCmd() *cobra.Command {
 	var skipBuild bool
+	var skipBindings bool
 	cmd := &cobra.Command{
 		Use:   "run [args...]",
 		Short: "Build and run the application binary",
@@ -655,7 +689,12 @@ Examples:
 
 			if !skipBuild {
 				orch := newOrchestrator()
-				if _, err := orch.Build(cmd.Context(), cfg, nil, targetOS, targetArch); err != nil {
+				if _, err := orch.BuildWithOptions(cmd.Context(), cfg, []string{binName}, targetOS, targetArch, builder.BuildOptions{
+					Jobs:          jobs,
+					SkipUnchanged: skipUnchanged,
+					Force:         force,
+					SkipBindings:  skipBindings,
+				}); err != nil {
 					return fmt.Errorf("build failed: %w", err)
 				}
 			}
@@ -673,5 +712,6 @@ Examples:
 		},
 	}
 	cmd.Flags().BoolVar(&skipBuild, "skip-build", false, "skip compilation phase and run existing binary")
+	cmd.Flags().BoolVar(&skipBindings, "skip-bindings", false, "skip Wails bindings generation")
 	return cmd
 }

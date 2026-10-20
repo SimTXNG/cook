@@ -50,7 +50,7 @@ func (r *Runner) RunArgs(ctx context.Context, name string, args []string, dir st
 // flushes buffered output and wraps any failure with the given label.
 func (r *Runner) runCmd(ctx context.Context, cmd *exec.Cmd, dir string, extraEnv map[string]string, label string) error {
 	cmd.Dir = dir
-	cmd.Env = buildEnv(extraEnv)
+	cmd.Env = BuildEnv(extraEnv)
 
 	stdout, stderr, flush := r.streams()
 	cmd.Stdout = stdout
@@ -66,9 +66,9 @@ func (r *Runner) runCmd(ctx context.Context, cmd *exec.Cmd, dir string, extraEnv
 	return nil
 }
 
-// buildEnv merges extraEnv into the current environment, replacing existing
+// BuildEnv merges extraEnv into the current environment, replacing existing
 // keys rather than appending duplicates.
-func buildEnv(extraEnv map[string]string) []string {
+func BuildEnv(extraEnv map[string]string) []string {
 	base := os.Environ()
 	if len(extraEnv) == 0 {
 		return base

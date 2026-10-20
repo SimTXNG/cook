@@ -7,7 +7,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/simtxng/cook/pkg/buildcache"
 	"github.com/simtxng/cook/pkg/config"
+	"github.com/simtxng/cook/pkg/exec"
 )
 
 // fakeCommand installs a shell script that logs its invocation to $FAKE_LOG and
@@ -229,5 +231,52 @@ func TestBuildFrontendDistDirResolution(t *testing.T) {
 				t.Fatalf("BuildFrontend: %v", err)
 			}
 		})
+	}
+}
+
+func TestBuildFrontendSkipsUnchangedBuild(t *testing.T) {
+	cfg, frontendDir, logPath := setupFrontend(t, "npm")
+	if err := os.MkdirAll(filepath.Join(frontendDir, "node_modules"), 0o755); err != nil {
+		t.Fatalf("create node_modules: %v", err)
+	}
+
+	opts := BuildOptions{SkipUnchanged: true}
+	if err := BuildFrontendWithOptions(context.Background(), cfg, opts); err != nil {
+		t.Fatalf("first BuildFrontend: %v", err)
+	}
+	firstLog := readLog(t, logPath)
+	if !strings.Contains(firstLog, "npm run build") {
+		t.Fatalf("first build did not run:\n%s", firstLog)
+	}
+
+	if err := BuildFrontendWithOptions(context.Background(), cfg, opts); err != nil {
+		t.Fatalf("second BuildFrontend: %v", err)
+	}
+	if secondLog := readLog(t, logPath); secondLog != firstLog {
+		t.Fatalf("unchanged frontend rebuilt:\nfirst:\n%s\nsecond:\n%s", firstLog, secondLog)
+	}
+}
+
+func TestRunBindingsSkipsUnchangedGeneration(t *testing.T) {
+	cfg, _, _ := setupFrontend(t, "npm")
+	logPath := filepath.Join(t.TempDir(), "bindings.log")
+	t.Setenv("BINDINGS_LOG", logPath)
+	cfg.Frontend.BindingsCmd = `mkdir -p frontend/bindings && printf x >> "$BINDINGS_LOG"`
+
+	runner := exec.NewRunner("frontend")
+	opts := BuildOptions{SkipUnchanged: true}
+	if err := runBindings(context.Background(), cfg, runner, opts, buildcache.Open(buildcache.Path(cfg.RootDir))); err != nil {
+		t.Fatalf("first runBindings: %v", err)
+	}
+	if err := runBindings(context.Background(), cfg, runner, opts, buildcache.Open(buildcache.Path(cfg.RootDir))); err != nil {
+		t.Fatalf("second runBindings: %v", err)
+	}
+
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "x" {
+		t.Fatalf("bindings ran %d time(s), want 1", len(data))
 	}
 }

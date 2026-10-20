@@ -1,6 +1,7 @@
 package orchestrator
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -202,5 +203,57 @@ func TestDiscoverBinaries(t *testing.T) {
 				t.Fatalf("discoverBinaries()[%q] = %q, want %q", tt.binary.Name, gotPath, filepath.Join(dir, tt.want))
 			}
 		})
+	}
+}
+
+func TestTargetNeedsBinaries(t *testing.T) {
+	if targetNeedsBinaries("syso") {
+		t.Error("syso should not require compiled binaries")
+	}
+	for _, target := range []string{"deb", "rpm", "archlinux", "void", "appimage", "nsis", "msix", "app", "dmg"} {
+		if !targetNeedsBinaries(target) {
+			t.Errorf("%s should require compiled binaries", target)
+		}
+	}
+}
+
+type recordingPackager struct {
+	name   string
+	target string
+	called bool
+}
+
+func (p *recordingPackager) Name() string { return p.name }
+
+func (p *recordingPackager) SupportedTargets() []string { return []string{p.target} }
+
+func (p *recordingPackager) Package(_ context.Context, _ *config.Config, target, _ string, _ map[string]string) ([]string, error) {
+	p.called = true
+	p.target = target
+	return []string{"artifact"}, nil
+}
+
+func TestPackageSysoSkipsBinaryBuild(t *testing.T) {
+	fake := &recordingPackager{name: "windows", target: "syso"}
+	o := NewOrchestrator()
+	o.Register(fake)
+
+	cfg := &config.Config{
+		RootDir: t.TempDir(),
+		Package: config.PackageConfig{Name: "app", OutputDir: "bin"},
+		Binaries: []config.BinaryConfig{
+			{Name: "app", Path: "./does-not-exist"},
+		},
+	}
+
+	artifacts, err := o.Package(context.Background(), cfg, "windows", "amd64", []string{"syso"}, false)
+	if err != nil {
+		t.Fatalf("Package: %v", err)
+	}
+	if !fake.called {
+		t.Fatal("syso packager was not invoked")
+	}
+	if len(artifacts) != 1 || artifacts[0] != "artifact" {
+		t.Fatalf("artifacts = %v", artifacts)
 	}
 }

@@ -11,3 +11,4 @@ bin/
 *.sig
 *.dmg
 *.msix
+.cook-cache.json

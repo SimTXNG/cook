@@ -136,3 +136,14 @@ func main() {
 		t.Fatalf("timed out waiting for AppExited signal")
 	}
 }
+
+func TestDevStagingPathIsUnique(t *testing.T) {
+	first := devStagingPath("/tmp/bin/app")
+	second := devStagingPath("/tmp/bin/app")
+	if first == second {
+		t.Fatalf("staging paths should be unique: %q", first)
+	}
+	if !strings.Contains(first, ".cook-dev-") {
+		t.Fatalf("staging path %q does not contain the dev marker", first)
+	}
+}

@@ -9,9 +9,11 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
+	"github.com/simtxng/cook/pkg/buildcache"
 	"github.com/simtxng/cook/pkg/config"
 )
 
@@ -57,38 +59,93 @@ func Run(ctx context.Context, cfg *config.Config, opts DevOptions) error {
 	}
 	frontendURL := fmt.Sprintf("%s://%s:%d", frontendProto, host, port)
 
-	// Step 1: Bindings Generation (if frontend enabled)
+	// Start the watcher before the initial compile so edits made during startup
+	// are not lost.
+	extraIgnored := []string{}
+	if cfg.Frontend.Dir != "" {
+		extraIgnored = append(extraIgnored, cfg.Frontend.Dir)
+	}
+	if cfg.Package.OutputDir != "" {
+		extraIgnored = append(extraIgnored, cfg.Package.OutputDir)
+	}
+	watcher, err := NewWatcher(cfg.RootDir, opts.Debounce, extraIgnored)
+	if err != nil {
+		return fmt.Errorf("failed to initialize file watcher: %w", err)
+	}
+	defer watcher.Close()
+	LogCook("Watching Go source files in %s (debounce: %v)", cfg.RootDir, opts.Debounce)
+
+	// Kick off bindings, the frontend dev server, and the backend compile
+	// concurrently. They are independent and dominate cold startup.
+	setupCtx, cancelSetup := context.WithCancel(ctx)
+	defer cancelSetup()
+
+	var (
+		wg             sync.WaitGroup
+		frontendServer *FrontendServer
+		frontendErr    error
+		supervisor     *BackendSupervisor
+		compileErr     error
+		bindingsErr    error
+	)
+
 	if cfg.Frontend.Enabled && !opts.SkipBindings {
-		if err := GenerateBindings(ctx, cfg); err != nil {
-			LogError("bindings", "Warning: initial binding generation failed: %v", err)
-		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			bindingsErr = GenerateBindingsWithOptions(setupCtx, cfg, opts.SkipUnchanged, opts.Force)
+		}()
 	}
 
-	// Step 2: Start Frontend Dev Server (in background)
-	var frontendServer *FrontendServer
 	if cfg.Frontend.Enabled && !opts.SkipFrontend {
 		frontendServer = NewFrontendServer(cfg, port, opts.Secure)
 		LogCook("Starting frontend dev server on %s...", frontendURL)
-		if err := frontendServer.Start(ctx); err != nil {
-			return fmt.Errorf("failed to start frontend server: %w", err)
-		}
-		defer frontendServer.Stop()
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			frontendErr = frontendServer.Start(setupCtx)
+		}()
 	}
 
-	// Step 3: Concurrently Compile Backend (if not skipped)
-	var supervisor *BackendSupervisor
 	if !opts.SkipBackend {
 		supervisor = NewBackendSupervisor(cfg)
 		LogCook("Compiling backend binary...")
-		if _, err := supervisor.Compile(ctx, opts.ExtraTags); err != nil {
-			if frontendServer != nil {
-				frontendServer.Stop()
-			}
-			return fmt.Errorf("initial backend compilation failed: %w", err)
-		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, compileErr = supervisor.CompileWithOptions(setupCtx, CompileOptions{
+				ExtraTags:     opts.ExtraTags,
+				GCFlags:       opts.GCFlags,
+				SkipUnchanged: opts.SkipUnchanged,
+				Force:         opts.Force,
+			})
+		}()
 	}
 
-	// Step 4: Ensure Frontend Server is Ready
+	wg.Wait()
+
+	if frontendErr != nil {
+		cancelSetup()
+		if supervisor != nil {
+			supervisor.Stop()
+		}
+		return fmt.Errorf("failed to start frontend server: %w", frontendErr)
+	}
+	if compileErr != nil {
+		cancelSetup()
+		if frontendServer != nil {
+			frontendServer.Stop()
+		}
+		return fmt.Errorf("initial backend compilation failed: %w", compileErr)
+	}
+	if bindingsErr != nil {
+		LogError("bindings", "Warning: initial binding generation failed: %v", bindingsErr)
+	}
+	if frontendServer != nil {
+		defer frontendServer.Stop()
+	}
+
+	// Ensure the frontend server is ready before launching the app.
 	if frontendServer != nil {
 		LogCook("Waiting for frontend dev server readiness...")
 		if err := frontendServer.WaitReady(ctx, 15*time.Second); err != nil {
@@ -98,7 +155,7 @@ func Run(ctx context.Context, cfg *config.Config, opts DevOptions) error {
 		}
 	}
 
-	// Step 5: Start Backend Application (if not skipped)
+	// Start the backend application.
 	if supervisor != nil {
 		if err := supervisor.Start(ctx, frontendURL, port, opts.Env); err != nil {
 			return fmt.Errorf("failed to start backend application: %w", err)
@@ -106,23 +163,7 @@ func Run(ctx context.Context, cfg *config.Config, opts DevOptions) error {
 		defer supervisor.Stop()
 	}
 
-	// Step 6: Start File Watcher
-	extraIgnored := []string{}
-	if cfg.Frontend.Dir != "" {
-		extraIgnored = append(extraIgnored, cfg.Frontend.Dir)
-	}
-	if cfg.Package.OutputDir != "" {
-		extraIgnored = append(extraIgnored, cfg.Package.OutputDir)
-	}
-
-	watcher, err := NewWatcher(cfg.RootDir, opts.Debounce, extraIgnored)
-	if err != nil {
-		return fmt.Errorf("failed to initialize file watcher: %w", err)
-	}
-	defer watcher.Close()
-	LogCook("Watching Go source files in %s (debounce: %v)", cfg.RootDir, opts.Debounce)
-
-	// Step 7: Setup Interactive Keyboard Shortcuts & Signal Traps
+	// Setup interactive keyboard shortcuts and signal traps.
 	actionCh := make(chan KeyboardAction, 5)
 	stopKeyboardCh := make(chan struct{})
 	defer close(stopKeyboardCh)
@@ -164,18 +205,42 @@ func Run(ctx context.Context, cfg *config.Config, opts DevOptions) error {
 				}
 			}
 
+			// Regenerate bindings and recompile concurrently; both only read the
+			// Go sources and share the Go build cache safely.
+			var (
+				reloadWG      sync.WaitGroup
+				reloadBindErr error
+				reloadCompErr error
+			)
 			if needsBindings && !opts.SkipBindings {
-				_ = GenerateBindings(ctx, cfg)
+				reloadWG.Add(1)
+				go func() {
+					defer reloadWG.Done()
+					reloadBindErr = GenerateBindingsWithOptions(ctx, cfg, opts.SkipUnchanged, opts.Force)
+				}()
 			}
-
 			if supervisor != nil {
-				// Incremental recompilation
-				LogCook("Recompiling backend...")
-				if _, err := supervisor.Compile(ctx, opts.ExtraTags); err != nil {
+				reloadWG.Add(1)
+				go func() {
+					defer reloadWG.Done()
+					_, reloadCompErr = supervisor.CompileWithOptions(ctx, CompileOptions{
+						ExtraTags:     opts.ExtraTags,
+						GCFlags:       opts.GCFlags,
+						SkipUnchanged: opts.SkipUnchanged,
+						Force:         opts.Force,
+					})
+				}()
+			}
+			reloadWG.Wait()
+
+			if reloadBindErr != nil {
+				LogError("bindings", "Binding regeneration failed: %v", reloadBindErr)
+			}
+			if supervisor != nil {
+				if reloadCompErr != nil {
 					LogError("cook", "Compilation failed; keeping previous instance running.")
 					continue
 				}
-
 				LogCook("Restarting backend...")
 				if err := supervisor.Restart(ctx, frontendURL, port, opts.Env); err != nil {
 					LogError("cook", "Failed to restart backend: %v", err)
@@ -187,15 +252,25 @@ func Run(ctx context.Context, cfg *config.Config, opts DevOptions) error {
 			case ActionRestartBackend:
 				if supervisor != nil {
 					LogCook("Manual restart requested.")
-					if _, err := supervisor.Compile(ctx, opts.ExtraTags); err == nil {
+					if _, err := supervisor.CompileWithOptions(ctx, CompileOptions{
+						ExtraTags:     opts.ExtraTags,
+						GCFlags:       opts.GCFlags,
+						SkipUnchanged: opts.SkipUnchanged,
+						Force:         opts.Force,
+					}); err == nil {
 						_ = supervisor.Restart(ctx, frontendURL, port, opts.Env)
 					}
 				}
 			case ActionRegenBindings:
 				LogCook("Regenerating Wails bindings...")
-				_ = GenerateBindings(ctx, cfg)
+				_ = GenerateBindingsWithOptions(ctx, cfg, opts.SkipUnchanged, opts.Force)
 				if supervisor != nil {
-					if _, err := supervisor.Compile(ctx, opts.ExtraTags); err == nil {
+					if _, err := supervisor.CompileWithOptions(ctx, CompileOptions{
+						ExtraTags:     opts.ExtraTags,
+						GCFlags:       opts.GCFlags,
+						SkipUnchanged: opts.SkipUnchanged,
+						Force:         opts.Force,
+					}); err == nil {
 						_ = supervisor.Restart(ctx, frontendURL, port, opts.Env)
 					}
 				}
@@ -229,9 +304,31 @@ func Run(ctx context.Context, cfg *config.Config, opts DevOptions) error {
 
 // GenerateBindings runs the bindings generator tool.
 func GenerateBindings(ctx context.Context, cfg *config.Config) error {
+	return GenerateBindingsWithOptions(ctx, cfg, false, false)
+}
+
+// GenerateBindingsWithOptions runs bindings generation, optionally skipping it
+// when the cached fingerprint matches.
+func GenerateBindingsWithOptions(ctx context.Context, cfg *config.Config, skipUnchanged, force bool) error {
 	cmdStr := strings.TrimSpace(cfg.Frontend.BindingsCmd)
 	if cmdStr == "" {
 		cmdStr = "wails3 generate bindings -ts -i"
+	}
+
+	var store *buildcache.Store
+	var fingerprint string
+	outputs := buildcache.BindingsOutputs(cfg)
+	if skipUnchanged && !force {
+		store = buildcache.Open(buildcache.Path(cfg.RootDir))
+		if inputs, err := buildcache.BindingsInputs(cfg); err == nil {
+			if fp, err := buildcache.Fingerprint(inputs, "bindings", cmdStr, "go:"+runtime.Version()); err == nil {
+				fingerprint = fp
+				if len(outputs) > 0 && store.Fresh("bindings", fp, outputs...) {
+					LogCook("Bindings unchanged; skipping generation")
+					return nil
+				}
+			}
+		}
 	}
 
 	startTime := time.Now()
@@ -244,6 +341,9 @@ func GenerateBindings(ctx context.Context, cfg *config.Config) error {
 		return fmt.Errorf("bindings generation failed: %s (%w)", outStr, err)
 	}
 
+	if fingerprint != "" && store != nil {
+		_ = store.Mark("bindings", fingerprint)
+	}
 	duration := time.Since(startTime).Round(time.Millisecond)
 	LogSuccess("Generated bindings in %v", duration)
 	return nil

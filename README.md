@@ -74,7 +74,24 @@ cook build linux.appimage
 
 # Build without frontend compilation
 cook build --skip-frontend
+
+# Compile multiple binaries in parallel and skip unchanged phases
+cook build --jobs 4 --skip-unchanged
+
+# Force a full rebuild despite --skip-unchanged
+cook build --skip-unchanged --force
 ```
+
+`--skip-unchanged` stores input fingerprints in `.cook-cache.json` at the project
+root. It skips bindings, frontend, and Go compile/link phases when nothing that
+affects them changed. Add `.cook-cache.json` to your project's `.gitignore`.
+
+Per-binary `upx_level` controls UPX compression effort (1 fastest, 9 smallest;
+default 6). UPX already-packed outputs are detected and skipped.
+
+With `--jobs 0` (the default), binaries compile concurrently once the Go build
+cache is warm; on a cold cache Cook builds them sequentially so the first build
+warms shared dependencies instead of compiling them twice.
 
 ### 3. Package for Distribution (`package`)
 Builds and packages targets for the specified operating system and architecture:
@@ -147,6 +164,9 @@ cook dev -p 9245
 
 # Backend only (skipping frontend dev server):
 cook dev --skip-frontend
+
+# Reuse unchanged build results and use debugger-friendly compiler flags:
+cook dev --skip-unchanged --gcflags "all=-N -l"
 ```
 
 ### 6. Run Application (`run`)

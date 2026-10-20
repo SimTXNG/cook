@@ -16,6 +16,7 @@ type Watcher struct {
 	fsWatcher    *fsnotify.Watcher
 	rootDir      string
 	debounce     time.Duration
+	maxWait      time.Duration
 	ignoredDirs  map[string]bool
 	changesCh    chan []string
 	errorsCh     chan error
@@ -23,6 +24,7 @@ type Watcher struct {
 	closeOnce    sync.Once
 	mu           sync.Mutex
 	pendingFiles map[string]struct{}
+	firstPending time.Time
 	timer        *time.Timer
 }
 
@@ -35,6 +37,10 @@ func NewWatcher(rootDir string, debounce time.Duration, extraIgnoredDirs []strin
 
 	if debounce <= 0 {
 		debounce = 150 * time.Millisecond
+	}
+	maxWait := debounce * 4
+	if maxWait < time.Second {
+		maxWait = time.Second
 	}
 
 	ignored := map[string]bool{
@@ -59,6 +65,7 @@ func NewWatcher(rootDir string, debounce time.Duration, extraIgnoredDirs []strin
 		fsWatcher:    fsWatcher,
 		rootDir:      rootDir,
 		debounce:     debounce,
+		maxWait:      maxWait,
 		ignoredDirs:  ignored,
 		changesCh:    make(chan []string, 10),
 		errorsCh:     make(chan error, 10),
@@ -186,10 +193,21 @@ func (w *Watcher) eventLoop() {
 
 			w.mu.Lock()
 			w.pendingFiles[event.Name] = struct{}{}
+			now := time.Now()
+			if w.firstPending.IsZero() {
+				w.firstPending = now
+			}
 			if w.timer != nil {
 				w.timer.Stop()
 			}
-			w.timer = time.AfterFunc(w.debounce, w.flushChanges)
+			wait := w.debounce
+			if remaining := w.maxWait - now.Sub(w.firstPending); remaining < wait {
+				if remaining < 0 {
+					remaining = 0
+				}
+				wait = remaining
+			}
+			w.timer = time.AfterFunc(wait, w.flushChanges)
 			w.mu.Unlock()
 		}
 	}
@@ -203,6 +221,7 @@ func (w *Watcher) flushChanges() {
 		return
 	}
 
+	w.firstPending = time.Time{}
 	files := make([]string, 0, len(w.pendingFiles))
 	for f := range w.pendingFiles {
 		files = append(files, f)

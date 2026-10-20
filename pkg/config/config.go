@@ -67,6 +67,16 @@ type BinaryConfig struct {
 	CommitVar string   `toml:"commit_var"`
 	CleanSyso bool     `toml:"clean_syso"`
 	UPX       bool     `toml:"upx"`
+	UPXLevel  int      `toml:"upx_level"`
+}
+
+// EffectiveUPXLevel returns the configured UPX compression level (1-9),
+// defaulting to 6 for fast builds.
+func (b BinaryConfig) EffectiveUPXLevel() int {
+	if b.UPXLevel >= 1 && b.UPXLevel <= 9 {
+		return b.UPXLevel
+	}
+	return 6
 }
 
 type HooksConfig struct {
