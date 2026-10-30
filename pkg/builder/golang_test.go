@@ -243,3 +243,114 @@ func TestBuildBinaryUPXFailureReturnsError(t *testing.T) {
 		t.Errorf("error does not mention UPX: %v", err)
 	}
 }
+
+func TestGoBuildEnv(t *testing.T) {
+	cfg := &config.Config{
+		Darwin: config.DarwinConfig{
+			MinOSVersion: "12.0",
+		},
+		Windows: config.WindowsConfig{
+			CC: "custom-mingw-gcc",
+		},
+	}
+
+	t.Run("cgo disabled", func(t *testing.T) {
+		bCfg := &config.BinaryConfig{CGO: false}
+		env := GoBuildEnv(cfg, bCfg, "windows", "amd64")
+		if env["CGO_ENABLED"] != "0" {
+			t.Errorf("CGO_ENABLED = %q, want 0", env["CGO_ENABLED"])
+		}
+		if _, ok := env["CC"]; ok {
+			t.Errorf("CC should not be set when CGO is disabled")
+		}
+	})
+
+	t.Run("darwin deployment target", func(t *testing.T) {
+		bCfg := &config.BinaryConfig{CGO: true}
+		env := GoBuildEnv(cfg, bCfg, "darwin", "arm64")
+		if env["MACOSX_DEPLOYMENT_TARGET"] != "12.0" {
+			t.Errorf("MACOSX_DEPLOYMENT_TARGET = %q, want 12.0", env["MACOSX_DEPLOYMENT_TARGET"])
+		}
+		if !strings.Contains(env["CGO_CFLAGS"], "-mmacosx-version-min=12.0") {
+			t.Errorf("CGO_CFLAGS = %q", env["CGO_CFLAGS"])
+		}
+	})
+
+	t.Run("windows cgo uses configured windows.cc", func(t *testing.T) {
+		bCfg := &config.BinaryConfig{CGO: true}
+		env := GoBuildEnv(cfg, bCfg, "windows", "amd64")
+		if env["CGO_ENABLED"] != "1" {
+			t.Errorf("CGO_ENABLED = %q, want 1", env["CGO_ENABLED"])
+		}
+		if env["CC"] != "custom-mingw-gcc" {
+			t.Errorf("CC = %q, want custom-mingw-gcc", env["CC"])
+		}
+	})
+
+	t.Run("windows cgo binary override takes precedence", func(t *testing.T) {
+		bCfg := &config.BinaryConfig{CGO: true, CC: "binary-specific-gcc"}
+		env := GoBuildEnv(cfg, bCfg, "windows", "amd64")
+		if env["CC"] != "binary-specific-gcc" {
+			t.Errorf("CC = %q, want binary-specific-gcc", env["CC"])
+		}
+	})
+}
+
+func TestResolveCrossCompilerAutoDetection(t *testing.T) {
+	fakeDir := t.TempDir()
+	fakeCC := filepath.Join(fakeDir, "x86_64-w64-mingw32-gcc")
+	fakeCXX := filepath.Join(fakeDir, "x86_64-w64-mingw32-g++")
+	writeFile(t, fakeCC, "#!/bin/sh\nexit 0\n")
+	writeFile(t, fakeCXX, "#!/bin/sh\nexit 0\n")
+	if err := os.Chmod(fakeCC, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(fakeCXX, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("PATH", fakeDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("CC", "")
+	t.Setenv("CXX", "")
+
+	cfg := &config.Config{}
+	bCfg := &config.BinaryConfig{CGO: true}
+
+	cc, cxx := ResolveCrossCompiler(cfg, bCfg, "windows", "amd64")
+	if cc != fakeCC {
+		t.Errorf("expected cc %q, got %q", fakeCC, cc)
+	}
+	if cxx != fakeCXX {
+		t.Errorf("expected cxx %q, got %q", fakeCXX, cxx)
+	}
+}
+
+func TestBuildBinaryFailsWhenMissingMinGWForWindows(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("cross-compilation check is only for non-windows hosts")
+	}
+
+	emptyDir := t.TempDir()
+	t.Setenv("PATH", emptyDir)
+	t.Setenv("CC", "")
+	t.Setenv("CXX", "")
+
+	root := setupGoModule(t)
+	cfg := &config.Config{
+		RootDir: root,
+		Package: config.PackageConfig{OutputDir: "bin"},
+	}
+	bCfg := &config.BinaryConfig{
+		Name: "test-win",
+		Path: "./cmd/foo",
+		CGO:  true,
+	}
+
+	_, err := BuildBinary(context.Background(), cfg, bCfg, "windows", "amd64")
+	if err == nil {
+		t.Fatal("expected failure when MinGW cross compiler is missing")
+	}
+	if !strings.Contains(err.Error(), "requires a MinGW C compiler") {
+		t.Errorf("unexpected error message: %v", err)
+	}
+}

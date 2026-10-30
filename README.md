@@ -249,6 +249,8 @@ generate_sha256 = true
 [windows]
 targets = ["syso", "nsis"]
 bundled_cli = "myapp-cli.exe"
+# cc = "x86_64-w64-mingw32-gcc" # optional C cross-compiler override (auto-detected from PATH when cross-compiling)
+# cxx = "x86_64-w64-mingw32-g++" # optional C++ cross-compiler override
 
 [windows.nsis]
 script = "build/windows/nsis/project.nsi"

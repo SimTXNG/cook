@@ -63,8 +63,30 @@ func ParseArch(arch string) winres.Arch {
 	}
 }
 
+// SysoOptions defines options for compiling a binary-specific syso object.
+type SysoOptions struct {
+	OriginalFilename string
+	InternalName     string
+	IsGUI            bool
+	DestPath         string
+}
+
 // CompileSyso compiles Windows resources (icon, manifest, version info) into a .syso COFF object.
 func CompileSyso(cfg *config.Config, arch string) (string, error) {
+	origName := cfg.Package.Name + ".exe"
+	if cfg.Package.ProductName != "" {
+		origName = cfg.Package.ProductName + ".exe"
+	}
+	return CompileSysoForBinary(cfg, nil, arch, SysoOptions{
+		OriginalFilename: origName,
+		InternalName:     strings.TrimSuffix(origName, ".exe"),
+		IsGUI:            true,
+	})
+}
+
+// CompileSysoForBinary compiles Windows resources (icon, manifest, version info)
+// into a .syso COFF object customized for a specific binary.
+func CompileSysoForBinary(cfg *config.Config, bCfg *config.BinaryConfig, arch string, opts SysoOptions) (string, error) {
 	if arch == "" {
 		arch = "amd64"
 	}
@@ -75,12 +97,16 @@ func CompileSyso(cfg *config.Config, arch string) (string, error) {
 
 	rs := &winres.ResourceSet{}
 
-	// 1. Icon compilation
+	// 1. Icon compilation: apply icon if GUI or if icon is configured
+	isGUI := opts.IsGUI
+	if bCfg != nil {
+		isGUI = bCfg.GUI
+	}
 	iconPath, err := resolveIconPath(cfg)
 	if err != nil {
 		return "", err
 	}
-	if iconPath != "" {
+	if iconPath != "" && (isGUI || opts.IsGUI || cfg.Windows.Syso.Icon != "" || cfg.Package.Icon != "") {
 		if err := applyIcon(rs, iconPath); err != nil {
 			return "", fmt.Errorf("failed to load icon %s: %w", iconPath, err)
 		}
@@ -105,38 +131,66 @@ func CompileSyso(cfg *config.Config, arch string) (string, error) {
 		ident := winres.AssemblyIdentity{
 			Version: v4,
 		}
-		if cfg.Package.Identifier != "" {
+		if bCfg != nil && bCfg.Name != "" {
+			ident.Name = bCfg.Name
+		} else if cfg.Package.Identifier != "" {
 			ident.Name = cfg.Package.Identifier
 		} else if cfg.Package.Name != "" {
 			ident.Name = cfg.Package.Name
 		}
 
-		rs.SetManifest(winres.AppManifest{
-			Identity:            ident,
-			Description:         cfg.Package.Description,
-			DPIAwareness:        winres.DPIPerMonitorV2,
-			UseCommonControlsV6: true,
-			ExecutionLevel:      winres.AsInvoker,
-		})
+		appManifest := winres.AppManifest{
+			Identity:       ident,
+			Description:    cfg.Package.Description,
+			ExecutionLevel: winres.AsInvoker,
+		}
+		if isGUI {
+			appManifest.DPIAwareness = winres.DPIPerMonitorV2
+			appManifest.UseCommonControlsV6 = true
+		}
+		rs.SetManifest(appManifest)
 	}
 
-	// 3. Version Info (info.json / config metadata)
+	// 3. Resolve OriginalFilename and InternalName to match the executable
+	origFilename := opts.OriginalFilename
+	if origFilename == "" && bCfg != nil {
+		origFilename = bCfg.Name
+		if !strings.HasSuffix(strings.ToLower(origFilename), ".exe") {
+			origFilename += ".exe"
+		}
+	}
+	if origFilename == "" {
+		baseName := cfg.Package.ProductName
+		if baseName == "" {
+			baseName = cfg.Package.Name
+		}
+		origFilename = baseName + ".exe"
+	}
+	internalName := opts.InternalName
+	if internalName == "" {
+		internalName = strings.TrimSuffix(origFilename, ".exe")
+	}
+
+	// 4. Version Info (info.json / config metadata)
 	infoJSONPath, err := resolveInfoJSONPath(cfg)
 	if err != nil {
 		return "", err
 	}
-	vi, err := buildVersionInfo(cfg, resolved, infoJSONPath)
+	vi, err := buildVersionInfo(cfg, resolved, infoJSONPath, origFilename, internalName)
 	if err != nil {
 		return "", err
 	}
 	rs.SetVersionInfo(vi)
 
-	// 4. Output path determination
-	outFile := cfg.Windows.Syso.Out
+	// 5. Output path determination
+	outFile := opts.DestPath
 	if outFile == "" {
-		outFile = filepath.Join(cfg.RootDir, fmt.Sprintf("wails_windows_%s.syso", arch))
-	} else if !filepath.IsAbs(outFile) {
-		outFile = filepath.Join(cfg.RootDir, outFile)
+		outFile = cfg.Windows.Syso.Out
+		if outFile == "" {
+			outFile = filepath.Join(cfg.RootDir, fmt.Sprintf("wails_windows_%s.syso", arch))
+		} else if !filepath.IsAbs(outFile) {
+			outFile = filepath.Join(cfg.RootDir, outFile)
+		}
 	}
 
 	if err := os.MkdirAll(filepath.Dir(outFile), 0755); err != nil {
@@ -216,12 +270,19 @@ func applyIcon(rs *winres.ResourceSet, iconPath string) error {
 	return rs.SetIcon(winres.ID(1), ico)
 }
 
-func buildVersionInfo(cfg *config.Config, resolved, infoJSONPath string) (version.Info, error) {
+func buildVersionInfo(cfg *config.Config, resolved, infoJSONPath, originalFilename, internalName string) (version.Info, error) {
 	vi := version.Info{}
 
 	v4 := config.VersionParts4(resolved)
 	vi.FileVersion = v4
 	vi.ProductVersion = v4
+
+	set := func(langID uint16, key, value string) error {
+		if err := vi.Set(langID, key, value); err != nil {
+			return fmt.Errorf("failed to set version resource %q: %w", key, err)
+		}
+		return nil
+	}
 
 	if infoJSONPath != "" {
 		data, err := os.ReadFile(infoJSONPath)
@@ -248,6 +309,25 @@ func buildVersionInfo(cfg *config.Config, resolved, infoJSONPath string) (versio
 					return version.Info{}, fmt.Errorf("invalid info.json entry %q (language %s): %w", k, langHex, err)
 				}
 			}
+			// Ensure OriginalFilename and InternalName are always populated to match the binary
+			if originalFilename != "" {
+				if err := vi.Set(langID, version.OriginalFilename, originalFilename); err != nil {
+					return version.Info{}, err
+				}
+			}
+			if internalName != "" {
+				if err := vi.Set(langID, version.InternalName, internalName); err != nil {
+					return version.Info{}, err
+				}
+			}
+		}
+		if len(ij.Info) == 0 {
+			if originalFilename != "" {
+				_ = vi.Set(version.LangNeutral, version.OriginalFilename, originalFilename)
+			}
+			if internalName != "" {
+				_ = vi.Set(version.LangNeutral, version.InternalName, internalName)
+			}
 		}
 		return vi, nil
 	}
@@ -263,13 +343,6 @@ func buildVersionInfo(cfg *config.Config, resolved, infoJSONPath string) (versio
 	}
 	company := cfg.Package.Company
 	copyright := cfg.Package.Copyright
-
-	set := func(langID uint16, key, value string) error {
-		if err := vi.Set(langID, key, value); err != nil {
-			return fmt.Errorf("failed to set version resource %q: %w", key, err)
-		}
-		return nil
-	}
 
 	if err := set(version.LangNeutral, version.ProductName, prodName); err != nil {
 		return version.Info{}, err
@@ -292,6 +365,16 @@ func buildVersionInfo(cfg *config.Config, resolved, infoJSONPath string) (versio
 	}
 	if err := set(version.LangNeutral, version.FileVersion, resolved); err != nil {
 		return version.Info{}, err
+	}
+	if originalFilename != "" {
+		if err := set(version.LangNeutral, version.OriginalFilename, originalFilename); err != nil {
+			return version.Info{}, err
+		}
+	}
+	if internalName != "" {
+		if err := set(version.LangNeutral, version.InternalName, internalName); err != nil {
+			return version.Info{}, err
+		}
 	}
 
 	return vi, nil

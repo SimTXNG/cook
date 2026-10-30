@@ -288,6 +288,7 @@ func newValidateCmd() *cobra.Command {
 			checkTool("makensis", false)
 			checkTool("codesign", false)
 			checkTool("create-dmg", false)
+			checkTool("x86_64-w64-mingw32-gcc", false)
 
 			if toolErr != nil {
 				return toolErr

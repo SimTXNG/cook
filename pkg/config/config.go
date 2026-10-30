@@ -68,6 +68,8 @@ type BinaryConfig struct {
 	CleanSyso bool     `toml:"clean_syso"`
 	UPX       bool     `toml:"upx"`
 	UPXLevel  int      `toml:"upx_level"`
+	CC        string   `toml:"cc"`
+	CXX       string   `toml:"cxx"`
 }
 
 // EffectiveUPXLevel returns the configured UPX compression level (1-9),
@@ -92,6 +94,8 @@ type LinuxConfig struct {
 	DesktopFile string          `toml:"desktop_file"`
 	Categories  string          `toml:"categories"`
 	BundledCLI  string          `toml:"bundled_cli"`
+	CC          string          `toml:"cc"`
+	CXX         string          `toml:"cxx"`
 	Deb         LinuxDebConfig  `toml:"deb"`
 	RPM         LinuxRPMConfig  `toml:"rpm"`
 	Arch        LinuxArchConfig `toml:"archlinux"`
@@ -170,6 +174,8 @@ func (a AppImageConfig) ZsyncEnabled() bool {
 type WindowsConfig struct {
 	Targets    []string          `toml:"targets"` // syso, nsis, msix
 	BundledCLI string            `toml:"bundled_cli"`
+	CC         string            `toml:"cc"`
+	CXX        string            `toml:"cxx"`
 	Syso       WindowsSysoConfig `toml:"syso"`
 	NSIS       WindowsNSISConfig `toml:"nsis"`
 	Signing    WindowsSignConfig `toml:"signing"`
@@ -212,6 +218,8 @@ type DarwinConfig struct {
 	CodesignIdentity           string          `toml:"codesign_identity"`
 	Notarize                   bool            `toml:"notarize"`
 	NotarizeProfile            string          `toml:"notarize_profile"`
+	CC                         string          `toml:"cc"`
+	CXX                        string          `toml:"cxx"`
 	DMG                        DarwinDMGConfig `toml:"dmg"`
 }
 

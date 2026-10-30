@@ -2,6 +2,8 @@ package windows
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -472,5 +474,44 @@ func TestEnsureWebView2BootstrapperExisting(t *testing.T) {
 	}
 	if res != wv2Path {
 		t.Errorf("expected %s, got %s", wv2Path, res)
+	}
+}
+
+func TestEnsureWebView2BootstrapperAutoDownloadConfigured(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", "10")
+		_, _ = w.Write([]byte("0123456789"))
+	}))
+	defer ts.Close()
+
+	origURL := DefaultWebView2BootstrapperURL
+	DefaultWebView2BootstrapperURL = ts.URL
+	defer func() { DefaultWebView2BootstrapperURL = origURL }()
+
+	tmpDir := t.TempDir()
+	customPath := filepath.Join(tmpDir, "custom", "subdir", "custom-setup.exe")
+	cfg := &config.Config{
+		Windows: config.WindowsConfig{
+			NSIS: config.WindowsNSISConfig{
+				Webview2Bootstrapper: customPath,
+				AutoDownloadWebview2: true,
+			},
+		},
+		RootDir: tmpDir,
+	}
+
+	res, err := EnsureWebView2Bootstrapper(cfg, tmpDir)
+	if err != nil {
+		t.Fatalf("expected successful download, got: %v", err)
+	}
+	if res != customPath {
+		t.Errorf("expected res %s, got %s", customPath, res)
+	}
+	data, err := os.ReadFile(customPath)
+	if err != nil {
+		t.Fatalf("failed to read downloaded file: %v", err)
+	}
+	if string(data) != "0123456789" {
+		t.Errorf("expected content '0123456789', got %q", string(data))
 	}
 }

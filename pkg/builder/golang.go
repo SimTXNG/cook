@@ -18,6 +18,7 @@ import (
 	"github.com/simtxng/cook/pkg/buildcache"
 	"github.com/simtxng/cook/pkg/config"
 	hookexec "github.com/simtxng/cook/pkg/exec"
+	winpack "github.com/simtxng/cook/pkg/packager/windows"
 	"github.com/simtxng/cook/pkg/timing"
 )
 
@@ -138,6 +139,9 @@ func GoBuildCacheArgs(args []string) []string {
 
 // GoBuildEnv returns the environment overrides used to compile b for a target.
 func GoBuildEnv(cfg *config.Config, bCfg *config.BinaryConfig, targetOS, targetArch string) map[string]string {
+	targetOS = config.NormalizeOS(targetOS)
+	targetArch = config.NormalizeArch(targetArch)
+
 	env := map[string]string{
 		"GOOS":   targetOS,
 		"GOARCH": targetArch,
@@ -149,7 +153,7 @@ func GoBuildEnv(cfg *config.Config, bCfg *config.BinaryConfig, targetOS, targetA
 	}
 
 	if targetOS == "darwin" {
-		if cfg.Darwin.MinOSVersion != "" {
+		if cfg != nil && cfg.Darwin.MinOSVersion != "" {
 			env["MACOSX_DEPLOYMENT_TARGET"] = cfg.Darwin.MinOSVersion
 			if bCfg.CGO {
 				env["CGO_CFLAGS"] = fmt.Sprintf("-mmacosx-version-min=%s", cfg.Darwin.MinOSVersion)
@@ -157,7 +161,141 @@ func GoBuildEnv(cfg *config.Config, bCfg *config.BinaryConfig, targetOS, targetA
 			}
 		}
 	}
+
+	if bCfg.CGO {
+		cc, cxx := ResolveCrossCompiler(cfg, bCfg, targetOS, targetArch)
+		if cc != "" {
+			env["CC"] = cc
+		}
+		if cxx != "" {
+			env["CXX"] = cxx
+		}
+	}
 	return env
+}
+
+// ResolveCrossCompiler determines the C and C++ cross-compilers to use for building a target.
+// When cross-compiling for Windows with CGO from a non-Windows host, it auto-detects
+// standard MinGW cross-compilers (e.g. x86_64-w64-mingw32-gcc) unless overridden in config
+// or the environment.
+func ResolveCrossCompiler(cfg *config.Config, bCfg *config.BinaryConfig, targetOS, targetArch string) (string, string) {
+	var cc, cxx string
+	if bCfg != nil {
+		cc = bCfg.CC
+		cxx = bCfg.CXX
+	}
+
+	targetOS = config.NormalizeOS(targetOS)
+	targetArch = config.NormalizeArch(targetArch)
+
+	switch targetOS {
+	case "windows":
+		if cc == "" && cfg != nil && cfg.Windows.CC != "" {
+			cc = cfg.Windows.CC
+		}
+		if cxx == "" && cfg != nil && cfg.Windows.CXX != "" {
+			cxx = cfg.Windows.CXX
+		}
+		if runtime.GOOS != "windows" {
+			if cc == "" {
+				if envCC := os.Getenv("CC"); envCC != "" && isWindowsCrossCompiler(envCC) {
+					cc = envCC
+				}
+			}
+			if cxx == "" {
+				if envCXX := os.Getenv("CXX"); envCXX != "" && isWindowsCrossCompiler(envCXX) {
+					cxx = envCXX
+				}
+			}
+			if cc == "" {
+				cc = detectWindowsCC(targetArch)
+			}
+			if cxx == "" {
+				cxx = detectWindowsCXX(targetArch)
+			}
+		}
+	case "linux":
+		if cc == "" && cfg != nil && cfg.Linux.CC != "" {
+			cc = cfg.Linux.CC
+		}
+		if cxx == "" && cfg != nil && cfg.Linux.CXX != "" {
+			cxx = cfg.Linux.CXX
+		}
+	case "darwin":
+		if cc == "" && cfg != nil && cfg.Darwin.CC != "" {
+			cc = cfg.Darwin.CC
+		}
+		if cxx == "" && cfg != nil && cfg.Darwin.CXX != "" {
+			cxx = cfg.Darwin.CXX
+		}
+	}
+
+	return cc, cxx
+}
+
+func isWindowsCrossCompiler(name string) bool {
+	lower := strings.ToLower(filepath.Base(name))
+	return strings.Contains(lower, "mingw") || strings.Contains(lower, "w64") || strings.Contains(lower, "windows")
+}
+
+func detectWindowsCC(arch string) string {
+	arch = config.NormalizeArch(arch)
+	var candidates []string
+	switch arch {
+	case "amd64":
+		candidates = []string{
+			"x86_64-w64-mingw32-gcc",
+			"x86_64-w64-mingw32-gcc-posix",
+			"x86_64-w64-mingw32-clang",
+		}
+	case "386":
+		candidates = []string{
+			"i686-w64-mingw32-gcc",
+			"i686-w64-mingw32-gcc-posix",
+			"i686-w64-mingw32-clang",
+		}
+	case "arm64":
+		candidates = []string{
+			"aarch64-w64-mingw32-gcc",
+			"aarch64-w64-mingw32-clang",
+		}
+	}
+	for _, c := range candidates {
+		if path, err := exec.LookPath(c); err == nil {
+			return path
+		}
+	}
+	return ""
+}
+
+func detectWindowsCXX(arch string) string {
+	arch = config.NormalizeArch(arch)
+	var candidates []string
+	switch arch {
+	case "amd64":
+		candidates = []string{
+			"x86_64-w64-mingw32-g++",
+			"x86_64-w64-mingw32-g++-posix",
+			"x86_64-w64-mingw32-clang++",
+		}
+	case "386":
+		candidates = []string{
+			"i686-w64-mingw32-g++",
+			"i686-w64-mingw32-g++-posix",
+			"i686-w64-mingw32-clang++",
+		}
+	case "arm64":
+		candidates = []string{
+			"aarch64-w64-mingw32-g++",
+			"aarch64-w64-mingw32-clang++",
+		}
+	}
+	for _, c := range candidates {
+		if path, err := exec.LookPath(c); err == nil {
+			return path
+		}
+	}
+	return ""
 }
 
 // GoInputFiles resolves every source file that can influence a Go build,
@@ -328,6 +466,50 @@ func buildBinaryWithOptions(ctx context.Context, cfg *config.Config, bCfg *confi
 	if bCfg.CleanSyso {
 		if err := cleanSysoFiles(cfg.RootDir, bCfg.Path); err != nil {
 			return "", fmt.Errorf("failed to clean syso files for binary %s: %w", bCfg.Name, err)
+		}
+	}
+
+	if targetOS == "windows" {
+		srcDir := bCfg.Path
+		if srcDir == "" {
+			srcDir = "."
+		}
+		if !filepath.IsAbs(srcDir) {
+			srcDir = filepath.Join(cfg.RootDir, srcDir)
+		}
+		srcDir = filepath.Clean(srcDir)
+		if info, err := os.Stat(srcDir); err == nil && !info.IsDir() {
+			srcDir = filepath.Dir(srcDir)
+		}
+
+		exeName := filepath.Base(outFile)
+		sysoPath := filepath.Join(srcDir, fmt.Sprintf("%s_windows_%s.syso", bCfg.Name, targetArch))
+
+		_, err := winpack.CompileSysoForBinary(cfg, bCfg, targetArch, winpack.SysoOptions{
+			OriginalFilename: exeName,
+			InternalName:     strings.TrimSuffix(exeName, ".exe"),
+			IsGUI:            bCfg.GUI,
+			DestPath:         sysoPath,
+		})
+		if err != nil {
+			return "", fmt.Errorf("failed to generate Windows resource object for binary %s: %w", bCfg.Name, err)
+		}
+		if bCfg.CleanSyso {
+			defer func() {
+				_ = os.Remove(sysoPath)
+			}()
+		}
+	}
+
+	if targetOS == "windows" && runtime.GOOS != "windows" && bCfg.CGO {
+		if _, ok := env["CC"]; !ok {
+			expected := "x86_64-w64-mingw32-gcc"
+			if targetArch == "386" {
+				expected = "i686-w64-mingw32-gcc"
+			} else if targetArch == "arm64" {
+				expected = "aarch64-w64-mingw32-gcc"
+			}
+			return "", fmt.Errorf("cgo cross-compilation for windows/%s requires a MinGW C compiler (e.g. %s), but none was found in PATH; install mingw-w64 or configure windows.cc in cook.toml", targetArch, expected)
 		}
 	}
 

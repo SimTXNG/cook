@@ -213,7 +213,7 @@ func TestBuildVersionInfoConsistentVersion(t *testing.T) {
 		RootDir: t.TempDir(),
 	}
 
-	vi, err := buildVersionInfo(cfg, resolvedWindowsVersion(cfg), "")
+	vi, err := buildVersionInfo(cfg, resolvedWindowsVersion(cfg), "", "simtx.exe", "simtx")
 	if err != nil {
 		t.Fatalf("buildVersionInfo failed: %v", err)
 	}
@@ -224,4 +224,52 @@ func TestBuildVersionInfoConsistentVersion(t *testing.T) {
 	if vi.ProductVersion != want {
 		t.Errorf("expected ProductVersion %v, got %v", want, vi.ProductVersion)
 	}
+}
+
+func TestBuildVersionInfoSetsOriginalFilename(t *testing.T) {
+	cfg := &config.Config{
+		Package: config.PackageConfig{Name: "myapp"},
+		Version: &config.VersionInfo{Raw: "1.0.0", Windows: "1.0.0.0"},
+		RootDir: t.TempDir(),
+	}
+
+	t.Run("fallback sets original filename", func(t *testing.T) {
+		vi, err := buildVersionInfo(cfg, "1.0.0.0", "", "myapp.exe", "myapp")
+		if err != nil {
+			t.Fatalf("buildVersionInfo: %v", err)
+		}
+		tbl := vi.Table().GetMainTranslation()
+		if got := tbl["OriginalFilename"]; got != "myapp.exe" {
+			t.Errorf("OriginalFilename = %q, want 'myapp.exe'", got)
+		}
+		if got := tbl["InternalName"]; got != "myapp" {
+			t.Errorf("InternalName = %q, want 'myapp'", got)
+		}
+	})
+
+	t.Run("info.json sets original filename matching binary", func(t *testing.T) {
+		infoPath := filepath.Join(cfg.RootDir, "info.json")
+		content := `{
+			"info": {
+				"0000": {
+					"ProductName": "MyApp",
+					"OriginalFilename": "old.exe"
+				}
+			}
+		}`
+		if err := os.WriteFile(infoPath, []byte(content), 0644); err != nil {
+			t.Fatal(err)
+		}
+		vi, err := buildVersionInfo(cfg, "1.0.0.0", infoPath, "simtx-cli.exe", "simtx-cli")
+		if err != nil {
+			t.Fatalf("buildVersionInfo: %v", err)
+		}
+		tbl := vi.Table().GetMainTranslation()
+		if got := tbl["OriginalFilename"]; got != "simtx-cli.exe" {
+			t.Errorf("OriginalFilename = %q, want 'simtx-cli.exe'", got)
+		}
+		if got := tbl["InternalName"]; got != "simtx-cli" {
+			t.Errorf("InternalName = %q, want 'simtx-cli'", got)
+		}
+	})
 }
