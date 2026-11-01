@@ -107,8 +107,8 @@ func TestAssembleAppBundle(t *testing.T) {
 	if m["CFBundleShortVersionString"] != "0.1.0-alpha-12" {
 		t.Errorf("expected version 0.1.0-alpha-12, got %v", m["CFBundleShortVersionString"])
 	}
-	if m["CFBundleVersion"] != "0.1.0.0" {
-		t.Errorf("expected numeric CFBundleVersion 0.1.0.0, got %v", m["CFBundleVersion"])
+	if m["CFBundleVersion"] != "0.1.0.12" {
+		t.Errorf("expected numeric CFBundleVersion 0.1.0.12, got %v", m["CFBundleVersion"])
 	}
 
 	// Verify critical audio entitlement

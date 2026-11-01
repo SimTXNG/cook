@@ -19,7 +19,15 @@ func TestVersionFormatting(t *testing.T) {
 			wantRPM:     "0.1.0~alpha12",
 			wantArch:    "0.1.0alpha12",
 			wantVoid:    "0.1.0alpha12",
-			wantWindows: "0.1.0.0",
+			wantWindows: "0.1.0.12",
+		},
+		{
+			input:       "0.1.0-alpha-16",
+			wantDeb:     "0.1.0~alpha16",
+			wantRPM:     "0.1.0~alpha16",
+			wantArch:    "0.1.0alpha16",
+			wantVoid:    "0.1.0alpha16",
+			wantWindows: "0.1.0.16",
 		},
 		{
 			input:       "1.2.3",
@@ -35,7 +43,7 @@ func TestVersionFormatting(t *testing.T) {
 			wantRPM:     "2.0.0~beta.1",
 			wantArch:    "2.0.0beta.1",
 			wantVoid:    "2.0.0beta.1",
-			wantWindows: "2.0.0.0",
+			wantWindows: "2.0.0.1",
 		},
 	}
 

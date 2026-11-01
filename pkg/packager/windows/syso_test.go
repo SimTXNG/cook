@@ -4,6 +4,7 @@ import (
 	"debug/pe"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/simtxng/cook/pkg/config"
@@ -15,7 +16,8 @@ func TestParseVersion4(t *testing.T) {
 		input    string
 		expected [4]uint16
 	}{
-		{"0.1.0-alpha-12", [4]uint16{0, 1, 0, 0}},
+		{"0.1.0-alpha-12", [4]uint16{0, 1, 0, 12}},
+		{"0.1.0-alpha-16", [4]uint16{0, 1, 0, 16}},
 		{"1.2.3.4", [4]uint16{1, 2, 3, 4}},
 		{"2.5", [4]uint16{2, 5, 0, 0}},
 		{"10", [4]uint16{10, 0, 0, 0}},
@@ -27,6 +29,28 @@ func TestParseVersion4(t *testing.T) {
 		if got != tc.expected {
 			t.Errorf("ParseVersion4(%q) = %v, expected %v", tc.input, got, tc.expected)
 		}
+	}
+}
+
+func TestSanitizeManifestVersion(t *testing.T) {
+	input := `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<assembly manifestVersion="1.0" xmlns="urn:schemas-microsoft-com:asm.v1" xmlns:asmv3="urn:schemas-microsoft-com:asm.v3">
+    <assemblyIdentity type="win32" name="net.simtx.transmitter" version="0.1.0-alpha-12" processorArchitecture="*"/>
+    <dependency>
+        <dependentAssembly>
+            <assemblyIdentity type="win32" name="Microsoft.Windows.Common-Controls" version="6.0.0.0" processorArchitecture="*" publicKeyToken="6595b64144ccf1df" language="*"/>
+        </dependentAssembly>
+    </dependency>
+</assembly>`
+
+	out := string(sanitizeManifestVersion([]byte(input), "0.1.0.16"))
+
+	if !strings.Contains(out, `<assemblyIdentity type="win32" name="net.simtx.transmitter" version="0.1.0.16" processorArchitecture="*"/>`) {
+		t.Errorf("expected application assemblyIdentity version sanitized to 0.1.0.16, got:\n%s", out)
+	}
+
+	if !strings.Contains(out, `<assemblyIdentity type="win32" name="Microsoft.Windows.Common-Controls" version="6.0.0.0"`) {
+		t.Errorf("dependent Common-Controls assemblyIdentity version corrupted: %s", out)
 	}
 }
 

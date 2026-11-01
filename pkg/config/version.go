@@ -122,15 +122,18 @@ func FormatVoidVersion(v string) string {
 }
 
 // FormatWindowsVersion returns a strict 4-component numeric version (X.X.X.X),
-// as required by NSIS VIProductVersion and PE version resources:
-// e.g. "0.1.0-alpha-12" -> "0.1.0.0"
+// as required by NSIS VIProductVersion, PE version resources, and Windows manifests:
+// e.g. "0.1.0-alpha-16" -> "0.1.0.16"
 func FormatWindowsVersion(v string) string {
 	p := VersionParts4(v)
 	return fmt.Sprintf("%d.%d.%d.%d", p[0], p[1], p[2], p[3])
 }
 
 // VersionParts4 parses the numeric prefix of v into up to four 16-bit components,
-// padding with zeros and clamping each to 65535. Non-numeric input yields 1.0.0.0.
+// padding with zeros and clamping each to 65535. If fewer than 4 components are found
+// in the prefix, any trailing numeric sequence in the prerelease/build suffix is used
+// for the remaining components (e.g. "0.1.0-alpha-16" -> [0, 1, 0, 16] or "0.1.0.16").
+// Non-numeric input yields 1.0.0.0.
 func VersionParts4(v string) [4]uint16 {
 	var out [4]uint16
 	re := regexp.MustCompile(`^(\d+(?:\.\d+)*)`)
@@ -139,6 +142,7 @@ func VersionParts4(v string) [4]uint16 {
 		return [4]uint16{1, 0, 0, 0}
 	}
 	parts := strings.Split(matches[1], ".")
+	count := 0
 	for i := 0; i < 4 && i < len(parts); i++ {
 		n, err := strconv.Atoi(parts[i])
 		if err != nil || n < 0 {
@@ -148,6 +152,29 @@ func VersionParts4(v string) [4]uint16 {
 			n = 65535
 		}
 		out[i] = uint16(n)
+		count++
 	}
+
+	// If fewer than 4 parts were found, extract numeric components from the remainder
+	// (e.g. "-alpha-16" -> 16, "-beta.2" -> 2)
+	if count < 4 && len(v) > len(matches[1]) {
+		remainder := v[len(matches[1]):]
+		numRe := regexp.MustCompile(`\d+`)
+		numMatches := numRe.FindAllString(remainder, -1)
+		for _, numStr := range numMatches {
+			if count >= 4 {
+				break
+			}
+			n, err := strconv.Atoi(numStr)
+			if err == nil && n >= 0 {
+				if n > 65535 {
+					n = 65535
+				}
+				out[count] = uint16(n)
+				count++
+			}
+		}
+	}
+
 	return out
 }

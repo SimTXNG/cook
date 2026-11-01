@@ -7,6 +7,7 @@ import (
 	_ "image/png"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -122,6 +123,10 @@ func CompileSysoForBinary(cfg *config.Config, bCfg *config.BinaryConfig, arch st
 		if err != nil {
 			return "", fmt.Errorf("failed to read manifest %s: %w", manifestPath, err)
 		}
+		// Windows strictly requires a 4-part numeric version (e.g. "0.1.0.16")
+		// for <assemblyIdentity version="..."> in application manifests.
+		// Prerelease strings like "0.1.0-alpha-12" trigger Side-by-Side (SxS) activation errors.
+		manifestData = sanitizeManifestVersion(manifestData, resolved)
 		if err := rs.Set(winres.RT_MANIFEST, winres.ID(1), winres.LCIDDefault, manifestData); err != nil {
 			return "", fmt.Errorf("failed to embed manifest from %s: %w", manifestPath, err)
 		}
@@ -386,4 +391,50 @@ func fileExists(path string) bool {
 	}
 	fi, err := os.Stat(path)
 	return err == nil && !fi.IsDir()
+}
+
+var (
+	assemblyIdentTagRe = regexp.MustCompile(`(?s)<assemblyIdentity\b([^>]*)>`)
+	versionAttrRe      = regexp.MustCompile(`\bversion\s*=\s*["']([^"']*)["']`)
+	valid4PartVerRe    = regexp.MustCompile(`^\d+(?:\.\d+){3}$`)
+)
+
+// sanitizeManifestVersion inspects manifest XML data and ensures that the
+// application's <assemblyIdentity> has a valid 4-part numeric Windows version
+// (e.g. "0.1.0.16"). Windows strictly requires 4 dotted numbers for assembly
+// identities; prerelease strings like "0.1.0-alpha-12" fail Side-by-Side (SxS)
+// loading with error 0xc0150002.
+func sanitizeManifestVersion(data []byte, resolvedVer string) []byte {
+	if len(data) == 0 || resolvedVer == "" {
+		return data
+	}
+
+	manifestStr := string(data)
+	isFirst := true
+
+	sanitized := assemblyIdentTagRe.ReplaceAllStringFunc(manifestStr, func(tag string) string {
+		matches := versionAttrRe.FindStringSubmatch(tag)
+		// The first <assemblyIdentity> in a Windows manifest is the application's own identity.
+		if isFirst {
+			isFirst = false
+			if len(matches) > 0 {
+				return versionAttrRe.ReplaceAllString(tag, fmt.Sprintf(`version=%q`, resolvedVer))
+			}
+			if strings.HasSuffix(tag, "/>") {
+				return tag[:len(tag)-2] + fmt.Sprintf(` version=%q/>`, resolvedVer)
+			}
+			if strings.HasSuffix(tag, ">") {
+				return tag[:len(tag)-1] + fmt.Sprintf(` version=%q>`, resolvedVer)
+			}
+			return tag
+		}
+
+		// For dependency identities (e.g. Common-Controls), only sanitize if invalid
+		if len(matches) > 1 && !valid4PartVerRe.MatchString(matches[1]) {
+			return versionAttrRe.ReplaceAllString(tag, fmt.Sprintf(`version=%q`, resolvedVer))
+		}
+		return tag
+	})
+
+	return []byte(sanitized)
 }

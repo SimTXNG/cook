@@ -70,7 +70,7 @@ func TestGenerator_BasicRendering(t *testing.T) {
 	if !strings.Contains(str, `"version": "0.1.0-alpha-12"`) {
 		t.Errorf("missing version in rendered file: %s", str)
 	}
-	if !strings.Contains(str, `"four_part": "0.1.0.0"`) {
+	if !strings.Contains(str, `"four_part": "0.1.0.12"`) {
 		t.Errorf("missing four_part in rendered file: %s", str)
 	}
 	if !strings.Contains(str, `"tilde": "0.1.0~alpha12"`) {
